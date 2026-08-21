@@ -1,0 +1,215 @@
+import 'package:flutter/material.dart';
+import '../models/product_model.dart';
+
+class ProductModal extends StatefulWidget {
+  final ProductModel? product;
+  final Function(ProductModel) onSave;
+
+  const ProductModal({
+    super.key,
+    this.product,
+    required this.onSave,
+  });
+
+  @override
+  State<ProductModal> createState() => _ProductModalState();
+}
+
+class _ProductModalState extends State<ProductModal> {
+  final _formKey = GlobalKey<FormState>();
+  late TextEditingController _nameController;
+  late TextEditingController _descController;
+  late TextEditingController _priceController;
+  late TextEditingController _stockController;
+  String _category = 'milktea';
+
+  bool get isEdit => widget.product != null;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.product?.name ?? '');
+    _descController = TextEditingController(text: widget.product?.description ?? '');
+    _priceController = TextEditingController(
+      text: widget.product != null ? widget.product!.price.toStringAsFixed(2) : '',
+    );
+    _stockController = TextEditingController(
+      text: widget.product != null ? widget.product!.stock.toString() : '25',
+    );
+    _category = widget.product?.category ?? 'milktea';
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _descController.dispose();
+    _priceController.dispose();
+    _stockController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (_formKey.currentState!.validate()) {
+      final price = double.tryParse(_priceController.text.trim()) ?? 0.0;
+      final stock = int.tryParse(_stockController.text.trim()) ?? 20;
+
+      final updatedProduct = ProductModel(
+        id: widget.product?.id ?? 'prod_${DateTime.now().millisecondsSinceEpoch}',
+        name: _nameController.text.trim(),
+        description: _descController.text.trim(),
+        price: price,
+        category: _category,
+        stock: stock,
+        createdAt: widget.product?.createdAt ?? DateTime.now(),
+      );
+
+      widget.onSave(updatedProduct);
+      Navigator.of(context).pop();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      backgroundColor: Colors.white,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        constraints: const BoxConstraints(maxWidth: 440),
+        child: SingleChildScrollView(
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      isEdit ? 'Edit Product' : 'Add New Product',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF1E1B18),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 20),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                // Name
+                TextFormField(
+                  controller: _nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Product Name',
+                    hintText: 'e.g. Classic Milk Tea',
+                    prefixIcon: Icon(Icons.drive_file_rename_outline),
+                  ),
+                  validator: (val) => val == null || val.trim().isEmpty ? 'Enter product name' : null,
+                ),
+                const SizedBox(height: 14),
+
+                // Category & Price
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        initialValue: _category,
+                        decoration: const InputDecoration(
+                          labelText: 'Category',
+                          prefixIcon: Icon(Icons.category_rounded),
+                        ),
+                        items: const [
+                          DropdownMenuItem(value: 'milktea', child: Text('Milk Tea')),
+                          DropdownMenuItem(value: 'snack', child: Text('Snack')),
+                        ],
+                        onChanged: (val) {
+                          if (val != null) setState(() => _category = val);
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextFormField(
+                        controller: _priceController,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Price (\$)',
+                          hintText: '4.50',
+                          prefixIcon: Icon(Icons.attach_money_rounded),
+                        ),
+                        validator: (val) {
+                          if (val == null || val.trim().isEmpty) return 'Enter price';
+                          final d = double.tryParse(val.trim());
+                          if (d == null || d <= 0) return 'Valid price > 0';
+                          return null;
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+
+                // Stock
+                TextFormField(
+                  controller: _stockController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Current Stock Quantity',
+                    hintText: '25',
+                    prefixIcon: Icon(Icons.inventory_2_rounded),
+                  ),
+                  validator: (val) {
+                    if (val == null || val.trim().isEmpty) return 'Enter stock';
+                    final n = int.tryParse(val.trim());
+                    if (n == null || n < 0) return 'Stock >= 0';
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 14),
+
+                // Description
+                TextFormField(
+                  controller: _descController,
+                  maxLines: 2,
+                  decoration: const InputDecoration(
+                    labelText: 'Description',
+                    hintText: 'Product ingredients, toppings, or details...',
+                    prefixIcon: Icon(Icons.notes_rounded),
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Buttons
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('Cancel'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: ElevatedButton(
+                        onPressed: _submit,
+                        child: Text(isEdit ? 'Save Changes' : 'Add Product'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
