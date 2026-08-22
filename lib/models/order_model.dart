@@ -48,7 +48,7 @@ class OrderModel {
   final double subtotal;
   final double tax;
   final double total;
-  final String paymentMethod; // 'physical' / 'cash', 'online', 'gcash', 'maya'
+  final String paymentMethod; // 'physical' / 'cash', 'online', 'gcash', 'maya', 'maribank'
   final String status; // 'completed'
   final List<OrderItemModel> items;
   final DateTime createdAt;
@@ -78,6 +78,8 @@ class OrderModel {
         return 'GCash';
       case 'maya':
         return 'Maya';
+      case 'maribank':
+        return 'MariBank';
       default:
         return paymentMethod;
     }

@@ -2,6 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../theme/app_theme.dart';
 
+class _PaymentAccount {
+  final String provider;
+  final String accountNumber;
+
+  const _PaymentAccount({
+    required this.provider,
+    required this.accountNumber,
+  });
+}
+
 class PaymentModal extends StatefulWidget {
   final double total;
   final Function(String paymentMethod) onConfirm;
@@ -17,19 +27,36 @@ class PaymentModal extends StatefulWidget {
 }
 
 class _PaymentModalState extends State<PaymentModal> {
-  String _selectedMethod = 'physical'; // 'physical', 'online', 'gcash', 'maya'
+  String _selectedMethod = 'physical'; // 'physical', 'gcash', 'maribank', or 'maya'
 
-  String _getQRData(String method) {
-    final amt = widget.total.toStringAsFixed(2);
-    switch (method) {
-      case 'gcash':
-        return 'https://pay.coffeeshop.com/gcash?amount=$amt';
+  _PaymentAccount get _selectedAccount {
+    switch (_selectedMethod) {
+      case 'maribank':
+        return const _PaymentAccount(
+          provider: 'MariBank',
+          accountNumber: '16837903888',
+        );
       case 'maya':
-        return 'https://pay.coffeeshop.com/maya?amount=$amt';
-      case 'online':
+        return const _PaymentAccount(
+          provider: 'Maya',
+          accountNumber: '09676128378',
+        );
+      case 'gcash':
       default:
-        return 'https://pay.coffeeshop.com/checkout?amount=$amt';
+        return const _PaymentAccount(
+          provider: 'GCash',
+          accountNumber: '09676128378',
+        );
     }
+  }
+
+  String _getQRData() {
+    final account = _selectedAccount;
+    return [
+      'Payment provider: ${account.provider}',
+      'Account number: ${account.accountNumber}',
+      'Amount: ${widget.total.toStringAsFixed(2)}',
+    ].join('\n');
   }
 
   @override
@@ -106,9 +133,9 @@ class _PaymentModalState extends State<PaymentModal> {
               ),
               const SizedBox(height: 16),
 
-              // Online / E-Wallet Section
+              // Online Payment Section
               const Text(
-                'ONLINE / E-WALLET',
+                'ONLINE PAYMENT',
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w800,
@@ -118,33 +145,33 @@ class _PaymentModalState extends State<PaymentModal> {
               ),
               const SizedBox(height: 8),
               _buildOption(
-                id: 'online',
-                title: 'Online Payment (Universal QR)',
-                subtitle: 'GCash, Maya, Bank Transfer QR',
-                icon: Icons.qr_code_scanner_rounded,
+                id: 'gcash',
+                title: 'GCash',
+                subtitle: 'Recipient account: 09676128378',
+                icon: Icons.account_balance_wallet_rounded,
                 iconBg: const Color(0xFFDBEAFE),
                 iconColor: const Color(0xFF2563EB),
               ),
               const SizedBox(height: 8),
               _buildOption(
-                id: 'gcash',
-                title: 'GCash',
-                subtitle: 'Direct GCash merchant QR',
-                icon: Icons.account_balance_wallet_rounded,
-                iconBg: const Color(0xFFEFF6FF),
-                iconColor: const Color(0xFF0284C7),
+                id: 'maribank',
+                title: 'MariBank',
+                subtitle: 'Recipient account: 16837903888',
+                icon: Icons.account_balance_rounded,
+                iconBg: const Color(0xFFDCFCE7),
+                iconColor: const Color(0xFF16A34A),
               ),
               const SizedBox(height: 8),
               _buildOption(
                 id: 'maya',
                 title: 'Maya',
-                subtitle: 'Direct Maya digital payment',
-                icon: Icons.credit_card_rounded,
-                iconBg: const Color(0xFFECFDF5),
-                iconColor: const Color(0xFF059669),
+                subtitle: 'Recipient account: 09676128378',
+                icon: Icons.phone_android_rounded,
+                iconBg: const Color(0xFFFEF3C7),
+                iconColor: const Color(0xFFD97706),
               ),
 
-              // QR Code Box for Online / E-wallet
+              // Account-specific QR code for the selected online payment method.
               if (isQRMethod) ...[
                 const SizedBox(height: 16),
                 Container(
@@ -169,7 +196,7 @@ class _PaymentModalState extends State<PaymentModal> {
                           ),
                           const SizedBox(width: 6),
                           Text(
-                            'SCAN QR TO PAY (${_selectedMethod.toUpperCase()})',
+                            'SCAN ${_selectedAccount.provider.toUpperCase()} QR TO PAY',
                             style: const TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w800,
@@ -193,7 +220,7 @@ class _PaymentModalState extends State<PaymentModal> {
                           ],
                         ),
                         child: QrImageView(
-                          data: _getQRData(_selectedMethod),
+                          data: _getQRData(),
                           version: QrVersions.auto,
                           size: 150.0,
                           backgroundColor: Colors.white,
@@ -209,6 +236,15 @@ class _PaymentModalState extends State<PaymentModal> {
                       ),
                       const SizedBox(height: 10),
                       Text(
+                        _selectedAccount.accountNumber,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[600],
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
                         'Amount: \$${widget.total.toStringAsFixed(2)}',
                         style: const TextStyle(
                           fontSize: 14,
@@ -218,7 +254,7 @@ class _PaymentModalState extends State<PaymentModal> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        'Show QR to customer • Confirm after payment',
+                        'Confirm the recipient name shown in your payment app before sending',
                         style: TextStyle(
                           fontSize: 10,
                           color: Colors.grey[500],
