@@ -27,41 +27,36 @@ class PaymentModal extends StatefulWidget {
 }
 
 class _PaymentModalState extends State<PaymentModal> {
-  String _selectedMethod = 'physical'; // 'physical', 'gcash', 'maribank', or 'maya'
+  String _selectedMethod = 'physical'; // 'physical' or 'universal'
 
-  _PaymentAccount get _selectedAccount {
-    switch (_selectedMethod) {
-      case 'maribank':
-        return const _PaymentAccount(
-          provider: 'MariBank',
-          accountNumber: '16837903888',
-        );
-      case 'maya':
-        return const _PaymentAccount(
-          provider: 'Maya',
-          accountNumber: '09676128378',
-        );
-      case 'gcash':
-      default:
-        return const _PaymentAccount(
-          provider: 'GCash',
-          accountNumber: '09676128378',
-        );
-    }
-  }
+  static const _paymentAccounts = <_PaymentAccount>[
+    _PaymentAccount(
+      provider: 'GCash',
+      accountNumber: '09676128378',
+    ),
+    _PaymentAccount(
+      provider: 'Maya',
+      accountNumber: '09676128378',
+    ),
+    _PaymentAccount(
+      provider: 'MariBank',
+      accountNumber: '16837903888',
+    ),
+  ];
 
   String _getQRData() {
-    final account = _selectedAccount;
     return [
-      'Payment provider: ${account.provider}',
-      'Account number: ${account.accountNumber}',
+      'Universal payment QR',
+      ..._paymentAccounts.map(
+        (account) => '${account.provider}: ${account.accountNumber}',
+      ),
       'Amount: ${widget.total.toStringAsFixed(2)}',
     ].join('\n');
   }
 
   @override
   Widget build(BuildContext context) {
-    final isQRMethod = _selectedMethod != 'physical';
+    final isQRMethod = _selectedMethod == 'universal';
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
@@ -145,33 +140,15 @@ class _PaymentModalState extends State<PaymentModal> {
               ),
               const SizedBox(height: 8),
               _buildOption(
-                id: 'gcash',
-                title: 'GCash',
-                subtitle: 'Recipient account: 09676128378',
-                icon: Icons.account_balance_wallet_rounded,
+                id: 'universal',
+                title: 'Universal QR Payment',
+                subtitle: 'One QR for GCash, Maya, and MariBank',
+                icon: Icons.qr_code_scanner_rounded,
                 iconBg: const Color(0xFFDBEAFE),
                 iconColor: const Color(0xFF2563EB),
               ),
-              const SizedBox(height: 8),
-              _buildOption(
-                id: 'maribank',
-                title: 'MariBank',
-                subtitle: 'Recipient account: 16837903888',
-                icon: Icons.account_balance_rounded,
-                iconBg: const Color(0xFFDCFCE7),
-                iconColor: const Color(0xFF16A34A),
-              ),
-              const SizedBox(height: 8),
-              _buildOption(
-                id: 'maya',
-                title: 'Maya',
-                subtitle: 'Recipient account: 09676128378',
-                icon: Icons.phone_android_rounded,
-                iconBg: const Color(0xFFFEF3C7),
-                iconColor: const Color(0xFFD97706),
-              ),
 
-              // Account-specific QR code for the selected online payment method.
+              // One QR code containing all supported payment accounts.
               if (isQRMethod) ...[
                 const SizedBox(height: 16),
                 Container(
@@ -195,8 +172,8 @@ class _PaymentModalState extends State<PaymentModal> {
                             color: Color(0xFF2563EB),
                           ),
                           const SizedBox(width: 6),
-                          Text(
-                            'SCAN ${_selectedAccount.provider.toUpperCase()} QR TO PAY',
+                          const Text(
+                            'SCAN UNIVERSAL QR TO PAY',
                             style: const TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w800,
@@ -235,14 +212,39 @@ class _PaymentModalState extends State<PaymentModal> {
                         ),
                       ),
                       const SizedBox(height: 10),
-                      Text(
-                        _selectedAccount.accountNumber,
+                      const Text(
+                        'Available payment accounts',
                         style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[600],
-                          letterSpacing: 0.4,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF1E293B),
                         ),
                       ),
+                      const SizedBox(height: 4),
+                      for (final account in _paymentAccounts)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 3),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                '${account.provider}: ',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Color(0xFF475569),
+                                ),
+                              ),
+                              Text(
+                                account.accountNumber,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.grey[600],
+                                  letterSpacing: 0.4,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       const SizedBox(height: 8),
                       Text(
                         'Amount: \$${widget.total.toStringAsFixed(2)}',
