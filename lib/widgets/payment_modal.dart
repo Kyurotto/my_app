@@ -174,7 +174,7 @@ class _PaymentModalState extends State<PaymentModal> {
                           const SizedBox(width: 6),
                           const Text(
                             'SCAN UNIVERSAL QR TO PAY',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w800,
                               color: Color(0xFF2563EB),
