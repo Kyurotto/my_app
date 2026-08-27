@@ -38,6 +38,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           appBar: AppBar(
             backgroundColor: AppTheme.primaryCoffee,
             elevation: 0,
+            automaticallyImplyLeading: false,
             title: Row(
               children: [
                 Container(
