@@ -3,7 +3,10 @@ import 'package:flutter/foundation.dart';
 import '../models/user_model.dart';
 import '../models/product_model.dart';
 import '../models/order_model.dart';
+import '../models/stock_log_model.dart';
+import '../models/report_model.dart';
 import '../database.dart';
+import '../utils/password_hasher.dart';
 
 class AppService extends ChangeNotifier {
   static final AppService _instance = AppService._internal();
@@ -20,13 +23,16 @@ class AppService extends ChangeNotifier {
   bool get isAdmin => _currentUser?.isAdmin ?? false;
 
   final List<UserModel> _users = [];
-  final Map<String, String> _passwords = {}; // username/email -> password
+  final Map<String, String> _passwords = {}; // username/email -> salted hash (PBKDF2-SHA256)
 
   final List<ProductModel> _products = [];
   List<ProductModel> get products => List.unmodifiable(_products);
 
   final List<OrderModel> _orders = [];
   List<OrderModel> get orders => List.unmodifiable(_orders);
+
+  final List<StockLogModel> _stockLogs = [];
+  List<StockLogModel> get stockLogs => List.unmodifiable(_stockLogs);
 
   void _initSeedData() {
     // 1. Seed Users (Matching Laravel DatabaseSeeder)
@@ -48,10 +54,12 @@ class AppService extends ChangeNotifier {
     );
 
     _users.addAll([admin, employee]);
-    _passwords['admin@example.com'] = 'password';
-    _passwords['admin'] = 'password';
-    _passwords['employee@example.com'] = 'password';
-    _passwords['employee'] = 'password';
+    final defaultAdminHash = PasswordHasher.hashPassword('password');
+    final defaultEmployeeHash = PasswordHasher.hashPassword('password');
+    _passwords['admin@example.com'] = defaultAdminHash;
+    _passwords['admin'] = defaultAdminHash;
+    _passwords['employee@example.com'] = defaultEmployeeHash;
+    _passwords['employee'] = defaultEmployeeHash;
 
     // 2. Seed Products (Matching Laravel ProductSeeder)
     _products.addAll([
@@ -212,6 +220,75 @@ class AppService extends ChangeNotifier {
         ],
       ),
     ]);
+
+    // 4. Seed Sample Stock Movement Audit Logs
+    _stockLogs.addAll([
+      StockLogModel(
+        id: 'log_1',
+        productId: 'prod_1',
+        sku: 'SKU-PROD1',
+        productName: 'Classic Milk Tea',
+        change: 50,
+        previousStock: 0,
+        newStock: 50,
+        type: 'initial',
+        reason: 'Initial Inventory Intake',
+        performedBy: 'Admin User',
+        createdAt: now.subtract(const Duration(days: 5)),
+      ),
+      StockLogModel(
+        id: 'log_2',
+        productId: 'prod_1',
+        sku: 'SKU-PROD1',
+        productName: 'Classic Milk Tea',
+        change: -1,
+        previousStock: 36,
+        newStock: 35,
+        type: 'sale',
+        reason: 'Order REC-9B4X7K21',
+        performedBy: 'Employee User',
+        createdAt: now.subtract(const Duration(minutes: 15)),
+      ),
+      StockLogModel(
+        id: 'log_3',
+        productId: 'prod_5',
+        sku: 'SKU-PROD5',
+        productName: 'Cheese Foam Milk Tea',
+        change: 15,
+        previousStock: 0,
+        newStock: 15,
+        type: 'initial',
+        reason: 'Initial Inventory Intake',
+        performedBy: 'Admin User',
+        createdAt: now.subtract(const Duration(days: 2)),
+      ),
+      StockLogModel(
+        id: 'log_4',
+        productId: 'prod_5',
+        sku: 'SKU-PROD5',
+        productName: 'Cheese Foam Milk Tea',
+        change: -1,
+        previousStock: 9,
+        newStock: 8,
+        type: 'sale',
+        reason: 'Order REC-7K1W5D44',
+        performedBy: 'Employee User',
+        createdAt: now.subtract(const Duration(hours: 2)),
+      ),
+      StockLogModel(
+        id: 'log_5',
+        productId: 'prod_6',
+        sku: 'SKU-PROD6',
+        productName: 'French Fries',
+        change: 30,
+        previousStock: 15,
+        newStock: 45,
+        type: 'restock',
+        reason: 'Supplier Batch Delivery Restock',
+        performedBy: 'Admin User',
+        createdAt: now.subtract(const Duration(days: 1)),
+      ),
+    ]);
   }
 
   // --- AUTHENTICATION ---
@@ -228,7 +305,16 @@ class AppService extends ChangeNotifier {
     }
 
     final storedPw = _passwords[user.email] ?? _passwords[user.username];
-    if (storedPw == password) {
+    if (storedPw != null && PasswordHasher.verifyPassword(password, storedPw)) {
+      // If the password was stored as legacy plaintext, seamlessly upgrade it to salted hash
+      if (PasswordHasher.isLegacyPlaintext(storedPw)) {
+        final upgradedHash = PasswordHasher.hashPassword(password);
+        _passwords[user.email] = upgradedHash;
+        _passwords[user.username] = upgradedHash;
+        if (MongoDatabase.isConnected) {
+          await MongoDatabase.saveUser(user, passwordOrHash: upgradedHash);
+        }
+      }
       _currentUser = user;
       notifyListeners();
       return true;
@@ -254,6 +340,8 @@ class AppService extends ChangeNotifier {
       return false;
     }
 
+    final hashedPassword = PasswordHasher.hashPassword(password);
+
     final empIndex = _users.length + 1;
     final newUser = UserModel(
       id: 'usr_${DateTime.now().millisecondsSinceEpoch}',
@@ -265,10 +353,10 @@ class AppService extends ChangeNotifier {
     );
 
     _users.add(newUser);
-    _passwords[newUser.email] = password;
-    _passwords[newUser.username] = password;
+    _passwords[newUser.email] = hashedPassword;
+    _passwords[newUser.username] = hashedPassword;
     if (MongoDatabase.isConnected) {
-      MongoDatabase.saveUser(newUser, password);
+      await MongoDatabase.saveUser(newUser, passwordOrHash: hashedPassword);
     }
     notifyListeners();
     return true;
@@ -282,14 +370,17 @@ class AppService extends ChangeNotifier {
   }) async {
     if (_currentUser == null) return false;
 
+    final oldEmail = _currentUser!.email;
+    final oldUsername = _currentUser!.username;
+    final currentStoredPw = _passwords[oldEmail] ?? _passwords[oldUsername];
+
+    String? updatedPasswordHash;
     if (currentPassword != null && currentPassword.isNotEmpty) {
-      final storedPw = _passwords[_currentUser!.email] ?? _passwords[_currentUser!.username];
-      if (storedPw != currentPassword) {
+      if (currentStoredPw == null || !PasswordHasher.verifyPassword(currentPassword, currentStoredPw)) {
         return false;
       }
       if (newPassword != null && newPassword.isNotEmpty) {
-        _passwords[email.trim()] = newPassword;
-        _passwords[_currentUser!.username] = newPassword;
+        updatedPasswordHash = PasswordHasher.hashPassword(newPassword);
       }
     }
 
@@ -303,9 +394,27 @@ class AppService extends ChangeNotifier {
       _users[idx] = updated;
     }
     _currentUser = updated;
+
+    // Update in-memory credentials map
+    final effectivePw = updatedPasswordHash ?? currentStoredPw;
+    if (effectivePw != null) {
+      if (oldEmail.isNotEmpty && oldEmail != updated.email) {
+        _passwords.remove(oldEmail);
+      }
+      if (oldUsername.isNotEmpty && oldUsername != updated.username) {
+        _passwords.remove(oldUsername);
+      }
+      _passwords[updated.email] = effectivePw;
+      _passwords[updated.username] = effectivePw;
+    }
+
     if (MongoDatabase.isConnected) {
-      final pw = _passwords[updated.email] ?? _passwords[updated.username] ?? 'password';
-      MongoDatabase.saveUser(updated, pw);
+      // Only include password if a new password was explicitly set.
+      // This prevents unintentionally resetting stored passwords in MongoDB when only profile info is edited.
+      await MongoDatabase.saveUser(
+        updated,
+        passwordOrHash: updatedPasswordHash,
+      );
     }
     notifyListeners();
     return true;
@@ -329,10 +438,26 @@ class AppService extends ChangeNotifier {
       if (dbUsers.isNotEmpty) {
         _users.clear();
         for (final u in dbUsers) {
-          _users.add(UserModel.fromMap(u));
-          final pw = u['password']?.toString() ?? 'password';
-          if (u['email'] != null) _passwords[u['email'].toString()] = pw;
-          if (u['username'] != null) _passwords[u['username'].toString()] = pw;
+          final user = UserModel.fromMap(u);
+          if (user.username.isNotEmpty || user.email.isNotEmpty) {
+            _users.add(user);
+          }
+          var pw = u['password']?.toString() ?? '';
+          if (pw.isEmpty) {
+            pw = PasswordHasher.hashPassword('password');
+            await MongoDatabase.saveUser(user, passwordOrHash: pw, docId: u['_id']);
+          } else if (PasswordHasher.isLegacyPlaintext(pw)) {
+            // Auto-migrate legacy plaintext passwords in MongoDB to secure salted hashes
+            final hashed = PasswordHasher.hashPassword(pw);
+            await MongoDatabase.saveUser(user, passwordOrHash: hashed, docId: u['_id']);
+            pw = hashed;
+          }
+          if (u['email'] != null && u['email'].toString().isNotEmpty) {
+            _passwords[u['email'].toString()] = pw;
+          }
+          if (u['username'] != null && u['username'].toString().isNotEmpty) {
+            _passwords[u['username'].toString()] = pw;
+          }
         }
       }
 
@@ -354,30 +479,97 @@ class AppService extends ChangeNotifier {
         _products.addAll(dbProducts);
       }
 
+      // 5. Seed & Sync stocks collection in MongoDB
+      await MongoDatabase.seedInitialStocksIfEmpty(_products);
+      for (final prod in _products) {
+        await MongoDatabase.saveStockFromProduct(prod);
+      }
+
+      // 6. Seed & Load stock movement audit logs from MongoDB
+      await MongoDatabase.seedInitialStockLogsIfEmpty(_stockLogs);
+      final dbStockLogs = await MongoDatabase.getStockLogs();
+      if (dbStockLogs.isNotEmpty) {
+        _stockLogs.clear();
+        _stockLogs.addAll(dbStockLogs);
+      }
+
+      // 7. Seed & Sync periodic reports into MongoDB reports collection
+      final initialReports = generatePeriodicReportModels();
+      await MongoDatabase.seedInitialReportsIfEmpty(initialReports);
+      await generateAndSyncReports();
+
       notifyListeners();
-      debugPrint("✅ AppService successfully synced with MongoDB! (${_orders.length} orders loaded)");
+      debugPrint("✅ AppService successfully synced with MongoDB! (${_orders.length} orders, ${_products.length} products, ${_stockLogs.length} stock logs, stocks & reports tables active)");
     } catch (e) {
       debugPrint("⚠️ Error in syncWithDatabase: $e");
     }
   }
 
-  // --- PRODUCTS CRUD ---
+  // --- PRODUCTS & INVENTORY CRUD ---
 
   Future<void> addProduct(ProductModel product) async {
     _products.insert(0, product);
+
+    // Record initial stock entry in audit log
+    if (product.stock > 0) {
+      final log = StockLogModel(
+        id: 'log_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(999)}',
+        productId: product.id,
+        sku: product.sku,
+        productName: product.name,
+        change: product.stock,
+        previousStock: 0,
+        newStock: product.stock,
+        type: 'initial',
+        reason: 'New product creation initial stock',
+        performedBy: _currentUser?.name ?? 'Admin User',
+        createdAt: DateTime.now(),
+      );
+      _stockLogs.insert(0, log);
+      if (MongoDatabase.isConnected) {
+        MongoDatabase.saveStockLog(log);
+      }
+    }
+
     notifyListeners();
     if (MongoDatabase.isConnected) {
       MongoDatabase.saveProduct(product);
+      generateAndSyncReports();
     }
   }
 
   Future<void> updateProduct(ProductModel product) async {
     final idx = _products.indexWhere((p) => p.id == product.id);
     if (idx != -1) {
+      final oldProduct = _products[idx];
+      final stockDiff = product.stock - oldProduct.stock;
+
       _products[idx] = product;
+
+      if (stockDiff != 0) {
+        final log = StockLogModel(
+          id: 'log_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(999)}',
+          productId: product.id,
+          sku: product.sku,
+          productName: product.name,
+          change: stockDiff,
+          previousStock: oldProduct.stock,
+          newStock: product.stock,
+          type: stockDiff > 0 ? 'restock' : 'adjustment',
+          reason: 'Product update inventory modification',
+          performedBy: _currentUser?.name ?? 'Admin User',
+          createdAt: DateTime.now(),
+        );
+        _stockLogs.insert(0, log);
+        if (MongoDatabase.isConnected) {
+          MongoDatabase.saveStockLog(log);
+        }
+      }
+
       notifyListeners();
       if (MongoDatabase.isConnected) {
         MongoDatabase.saveProduct(product);
+        generateAndSyncReports();
       }
     }
   }
@@ -387,14 +579,44 @@ class AppService extends ChangeNotifier {
     notifyListeners();
     if (MongoDatabase.isConnected) {
       MongoDatabase.deleteProduct(id);
+      generateAndSyncReports();
     }
   }
 
-  Future<void> setStock(String productId, int newStock) async {
+  Future<void> setStock(
+    String productId,
+    int newStock, {
+    String reason = 'Manual Inventory Update',
+    String type = 'adjustment',
+  }) async {
     final idx = _products.indexWhere((p) => p.id == productId);
     if (idx != -1) {
+      final oldStock = _products[idx].stock;
       final clamped = max(0, newStock);
+      final diff = clamped - oldStock;
+
       _products[idx] = _products[idx].copyWith(stock: clamped);
+
+      if (diff != 0) {
+        final log = StockLogModel(
+          id: 'log_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(999)}',
+          productId: _products[idx].id,
+          sku: _products[idx].sku,
+          productName: _products[idx].name,
+          change: diff,
+          previousStock: oldStock,
+          newStock: clamped,
+          type: type,
+          reason: reason,
+          performedBy: _currentUser?.name ?? 'Admin User',
+          createdAt: DateTime.now(),
+        );
+        _stockLogs.insert(0, log);
+        if (MongoDatabase.isConnected) {
+          MongoDatabase.saveStockLog(log);
+        }
+      }
+
       notifyListeners();
       if (MongoDatabase.isConnected) {
         MongoDatabase.saveProduct(_products[idx]);
@@ -402,18 +624,70 @@ class AppService extends ChangeNotifier {
     }
   }
 
-  Future<void> adjustStock(String productId, int delta) async {
+  Future<void> adjustStock(
+    String productId,
+    int delta, {
+    String reason = 'Stock adjustment',
+    String? notes,
+    String type = 'adjustment',
+    String? action,
+    String? staffName,
+  }) async {
+    final effectiveReason = notes ?? reason;
     final idx = _products.indexWhere((p) => p.id == productId);
     if (idx != -1) {
       final current = _products[idx].stock;
       final updated = max(0, current + delta);
+      final actualChange = updated - current;
+
       _products[idx] = _products[idx].copyWith(stock: updated);
+
+      if (actualChange != 0) {
+        final log = StockLogModel(
+          id: 'log_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(999)}',
+          productId: _products[idx].id,
+          sku: _products[idx].sku,
+          productName: _products[idx].name,
+          change: actualChange,
+          previousStock: current,
+          newStock: updated,
+          type: action ?? type,
+          reason: effectiveReason,
+          performedBy: staffName ?? (_currentUser?.name ?? 'Admin User'),
+          createdAt: DateTime.now(),
+        );
+        _stockLogs.insert(0, log);
+        if (MongoDatabase.isConnected) {
+          MongoDatabase.saveStockLog(log);
+        }
+      }
+
       notifyListeners();
       if (MongoDatabase.isConnected) {
         MongoDatabase.saveProduct(_products[idx]);
+        generateAndSyncReports();
       }
     }
   }
+
+  Future<void> restockProduct(
+    String productId,
+    int quantity, {
+    String reason = 'Restock',
+    String? notes,
+    String? action = 'restock',
+    String? staffName,
+  }) async {
+    await adjustStock(
+      productId,
+      quantity,
+      reason: notes ?? reason,
+      type: action ?? 'restock',
+      staffName: staffName,
+    );
+  }
+
+
 
   // --- POS / ORDERS ---
 
@@ -431,19 +705,27 @@ class AppService extends ChangeNotifier {
     required List<OrderItemModel> items,
     required String paymentMethod,
   }) async {
+    final orderId = 'ord_${DateTime.now().millisecondsSinceEpoch}';
+    final receiptNo = _generateReceiptNo();
+
     double subtotal = 0.0;
     for (final item in items) {
       subtotal += item.subtotal;
-      // Deduct stock
-      adjustStock(item.productId, -item.quantity);
+      // Deduct stock and log stock deduction transaction
+      adjustStock(
+        item.productId,
+        -item.quantity,
+        reason: 'POS Order Sale: $receiptNo (${item.quantity}x ${item.productName})',
+        type: 'sale',
+      );
     }
 
     final tax = double.parse((subtotal * 0.10).toStringAsFixed(2));
     final total = double.parse((subtotal + tax).toStringAsFixed(2));
 
     final newOrder = OrderModel(
-      id: 'ord_${DateTime.now().millisecondsSinceEpoch}',
-      receiptNo: _generateReceiptNo(),
+      id: orderId,
+      receiptNo: receiptNo,
       userId: _currentUser?.id ?? 'usr_guest',
       cashierName: _currentUser?.name ?? 'Cashier',
       subtotal: subtotal,
@@ -462,10 +744,41 @@ class AppService extends ChangeNotifier {
     // Persist order to MongoDB database
     if (MongoDatabase.isConnected) {
       MongoDatabase.saveOrder(newOrder);
+      generateAndSyncReports();
     }
 
     return newOrder;
   }
+
+  // --- INVENTORY & STOCK VALUATION STATS ---
+
+  int get totalStockUnits =>
+      _products.fold(0, (sum, p) => sum + p.stock);
+
+  double get totalInventoryRetailValue =>
+      _products.fold(0.0, (sum, p) => sum + p.stockValueRetail);
+
+  double get totalInventoryCostValue =>
+      _products.fold(0.0, (sum, p) => sum + p.stockValueCost);
+
+  double get totalInventoryRetailValuation => totalInventoryRetailValue;
+
+  double get totalInventoryCostValuation => totalInventoryCostValue;
+
+  double get totalInventoryPotentialProfit =>
+      totalInventoryRetailValue - totalInventoryCostValue;
+
+  int get lowStockCount =>
+      _products.where((p) => p.isLowStock).length;
+
+  int get outOfStockCount =>
+      _products.where((p) => p.isOutOfStock).length;
+
+  List<ProductModel> get lowStockProducts =>
+      _products.where((p) => p.isLowStock).toList();
+
+  List<ProductModel> get outOfStockProducts =>
+      _products.where((p) => p.isOutOfStock).toList();
 
   // --- ANALYTICS / STATS ---
 
@@ -473,6 +786,33 @@ class AppService extends ChangeNotifier {
 
   double get totalRevenue =>
       _orders.fold(0.0, (sum, o) => sum + o.total);
+
+  double get totalCOGS {
+    double cogs = 0.0;
+    for (final order in _orders) {
+      for (final item in order.items) {
+        final prod = _products.firstWhere(
+          (p) => p.id == item.productId,
+          orElse: () => ProductModel(
+            id: item.productId,
+            name: item.productName,
+            description: '',
+            price: item.unitPrice,
+            costPrice: item.unitPrice * 0.5,
+            category: 'milktea',
+          ),
+        );
+        cogs += prod.costPrice * item.quantity;
+      }
+    }
+    return double.parse(cogs.toStringAsFixed(2));
+  }
+
+  double get totalGrossProfit =>
+      double.parse((totalRevenue - totalCOGS).toStringAsFixed(2));
+
+  double get totalGrossMargin =>
+      totalRevenue > 0 ? double.parse(((totalGrossProfit / totalRevenue) * 100).toStringAsFixed(1)) : 0.0;
 
   int get todayOrdersCount {
     final now = DateTime.now();
@@ -514,36 +854,332 @@ class AppService extends ChangeNotifier {
     };
   }
 
-  Map<String, dynamic> getFilteredReport({required int month, required int year}) {
-    final filtered = _orders.where((o) =>
-        o.createdAt.month == month && o.createdAt.year == year).toList();
+  Map<String, int> get productUnitsSoldMap {
+    final map = <String, int>{};
+    for (final order in _orders) {
+      for (final item in order.items) {
+        map[item.productId] = (map[item.productId] ?? 0) + item.quantity;
+      }
+    }
+    return map;
+  }
+
+  Map<String, double> get productRevenueMap {
+    final map = <String, double>{};
+    for (final order in _orders) {
+      for (final item in order.items) {
+        map[item.productId] = (map[item.productId] ?? 0.0) + item.subtotal;
+      }
+    }
+    return map;
+  }
+
+  List<OrderModel> _filterOrdersByPeriod(String period, int m, int y, DateTime? startDate, DateTime? endDate) {
+    final now = DateTime.now();
+    return _orders.where((o) {
+      switch (period.toLowerCase()) {
+        case 'today':
+          return o.createdAt.year == now.year &&
+              o.createdAt.month == now.month &&
+              o.createdAt.day == now.day;
+        case 'week':
+          final startOfWeek = now.subtract(Duration(days: now.weekday - 1));
+          final startDay = DateTime(startOfWeek.year, startOfWeek.month, startOfWeek.day);
+          return o.createdAt.isAfter(startDay.subtract(const Duration(seconds: 1)));
+        case 'year':
+          return o.createdAt.year == y;
+        case 'all':
+          return true;
+        case 'custom':
+          if (startDate != null && endDate != null) {
+            final start = DateTime(startDate.year, startDate.month, startDate.day, 0, 0, 0);
+            final end = DateTime(endDate.year, endDate.month, endDate.day, 23, 59, 59);
+            return o.createdAt.isAfter(start.subtract(const Duration(seconds: 1))) &&
+                o.createdAt.isBefore(end.add(const Duration(seconds: 1)));
+          }
+          return o.createdAt.month == m && o.createdAt.year == y;
+        case 'month':
+        default:
+          return o.createdAt.month == m && o.createdAt.year == y;
+      }
+    }).toList();
+  }
+
+
+  Map<String, dynamic> getFilteredReport({
+    int? month,
+    int? year,
+    String period = 'month',
+    DateTime? startDate,
+    DateTime? endDate,
+  }) {
+    final now = DateTime.now();
+    final m = month ?? now.month;
+    final y = year ?? now.year;
+    final filtered = _filterOrdersByPeriod(period, m, y, startDate, endDate);
 
     final periodOrders = filtered.length;
     final periodRevenue = filtered.fold(0.0, (sum, o) => sum + o.total);
+    final periodSubtotal = filtered.fold(0.0, (sum, o) => sum + o.subtotal);
+    final periodTax = filtered.fold(0.0, (sum, o) => sum + o.tax);
 
-    double milkTea = 0.0;
-    double snack = 0.0;
+    double milkTeaRevenue = 0.0;
+    double milkTeaCOGS = 0.0;
+    int milkTeaUnits = 0;
+
+    double snackRevenue = 0.0;
+    double snackCOGS = 0.0;
+    int snackUnits = 0;
+
+    double totalCOGS = 0.0;
+    int totalUnitsSold = 0;
+
+    final unitsSoldMap = <String, int>{};
+    final revenueByProd = <String, double>{};
+    final cogsByProd = <String, double>{};
+    final paymentMethodCounts = <String, int>{};
+    final paymentMethodRevenue = <String, double>{};
+
     for (final order in filtered) {
+      final pMethod = order.paymentLabel;
+      paymentMethodCounts[pMethod] = (paymentMethodCounts[pMethod] ?? 0) + 1;
+      paymentMethodRevenue[pMethod] = (paymentMethodRevenue[pMethod] ?? 0.0) + order.total;
+
       for (final item in order.items) {
+        final qty = item.quantity;
+        final subtotal = item.subtotal;
+        totalUnitsSold += qty;
+
+        unitsSoldMap[item.productId] = (unitsSoldMap[item.productId] ?? 0) + qty;
+        revenueByProd[item.productId] = (revenueByProd[item.productId] ?? 0.0) + subtotal;
+
         final prod = _products.firstWhere(
           (p) => p.id == item.productId,
-          orElse: () => ProductModel(id: '', name: '', description: '', price: 0, category: 'milktea'),
+          orElse: () => ProductModel(
+            id: item.productId,
+            name: item.productName,
+            description: '',
+            price: item.unitPrice,
+            costPrice: item.unitPrice * 0.5,
+            category: 'milktea',
+          ),
         );
+
+        final itemCOGS = prod.costPrice * qty;
+        totalCOGS += itemCOGS;
+        cogsByProd[item.productId] = (cogsByProd[item.productId] ?? 0.0) + itemCOGS;
+
         if (prod.category.toLowerCase() == 'snack') {
-          snack += item.subtotal;
+          snackRevenue += subtotal;
+          snackCOGS += itemCOGS;
+          snackUnits += qty;
         } else {
-          milkTea += item.subtotal;
+          milkTeaRevenue += subtotal;
+          milkTeaCOGS += itemCOGS;
+          milkTeaUnits += qty;
         }
       }
     }
 
+    final grossProfit = periodRevenue - totalCOGS;
+    final grossMargin = periodRevenue > 0 ? (grossProfit / periodRevenue) * 100 : 0.0;
+    final avgOrderValue = periodOrders > 0 ? periodRevenue / periodOrders : 0.0;
+
+    final productSalesRank = <Map<String, dynamic>>[];
+    for (final prod in _products) {
+      final units = unitsSoldMap[prod.id] ?? 0;
+      final revenue = revenueByProd[prod.id] ?? 0.0;
+      final cogs = cogsByProd[prod.id] ?? 0.0;
+      final profit = revenue - cogs;
+      final margin = revenue > 0 ? (profit / revenue) * 100 : 0.0;
+
+      if (units > 0) {
+        productSalesRank.add({
+          'product': prod,
+          'units': units,
+          'revenue': double.parse(revenue.toStringAsFixed(2)),
+          'cogs': double.parse(cogs.toStringAsFixed(2)),
+          'profit': double.parse(profit.toStringAsFixed(2)),
+          'margin': double.parse(margin.toStringAsFixed(1)),
+          'avgPrice': double.parse((units > 0 ? revenue / units : prod.price).toStringAsFixed(2)),
+        });
+      }
+    }
+    productSalesRank.sort((a, b) => (b['revenue'] as double).compareTo(a['revenue'] as double));
+
     return {
       'periodOrders': periodOrders,
       'periodRevenue': double.parse(periodRevenue.toStringAsFixed(2)),
+      'periodSubtotal': double.parse(periodSubtotal.toStringAsFixed(2)),
+      'periodTax': double.parse(periodTax.toStringAsFixed(2)),
+      'periodCOGS': double.parse(totalCOGS.toStringAsFixed(2)),
+      'grossProfit': double.parse(grossProfit.toStringAsFixed(2)),
+      'grossMargin': double.parse(grossMargin.toStringAsFixed(1)),
+      'avgOrderValue': double.parse(avgOrderValue.toStringAsFixed(2)),
+      'totalUnitsSold': totalUnitsSold,
       'categoryRevenue': {
-        'Milk Tea': double.parse(milkTea.toStringAsFixed(2)),
-        'Snack': double.parse(snack.toStringAsFixed(2)),
+        'Milk Tea': double.parse(milkTeaRevenue.toStringAsFixed(2)),
+        'Snack': double.parse(snackRevenue.toStringAsFixed(2)),
       },
+      'categoryBreakdown': {
+        'Milk Tea': {
+          'revenue': double.parse(milkTeaRevenue.toStringAsFixed(2)),
+          'cogs': double.parse(milkTeaCOGS.toStringAsFixed(2)),
+          'profit': double.parse((milkTeaRevenue - milkTeaCOGS).toStringAsFixed(2)),
+          'margin': milkTeaRevenue > 0
+              ? double.parse((((milkTeaRevenue - milkTeaCOGS) / milkTeaRevenue) * 100).toStringAsFixed(1))
+              : 0.0,
+          'units': milkTeaUnits,
+        },
+        'Snack': {
+          'revenue': double.parse(snackRevenue.toStringAsFixed(2)),
+          'cogs': double.parse(snackCOGS.toStringAsFixed(2)),
+          'profit': double.parse((snackRevenue - snackCOGS).toStringAsFixed(2)),
+          'margin': snackRevenue > 0
+              ? double.parse((((snackRevenue - snackCOGS) / snackRevenue) * 100).toStringAsFixed(1))
+              : 0.0,
+          'units': snackUnits,
+        },
+      },
+      'paymentBreakdown': paymentMethodCounts.map((k, v) => MapEntry(k, {
+            'count': v,
+            'revenue': double.parse((paymentMethodRevenue[k] ?? 0.0).toStringAsFixed(2)),
+            'percent': periodRevenue > 0
+                ? double.parse((((paymentMethodRevenue[k] ?? 0.0) / periodRevenue) * 100).toStringAsFixed(1))
+                : 0.0,
+          })),
+      'topProducts': productSalesRank,
     };
+  }
+
+  Map<String, dynamic> getInventorySummary() {
+    int totalItems = _products.length;
+    int totalStock = 0;
+    double totalCostVal = 0.0;
+    double totalRetailVal = 0.0;
+    int lowStockCount = 0;
+    int outOfStockCount = 0;
+
+    for (final p in _products) {
+      totalStock += p.stock;
+      final cost = p.costPrice > 0 ? p.costPrice : p.price * 0.5;
+      totalCostVal += cost * p.stock;
+      totalRetailVal += p.price * p.stock;
+      if (p.stock <= 0) {
+        outOfStockCount++;
+      } else if (p.stock <= p.minStockLevel) {
+        lowStockCount++;
+      }
+    }
+
+    final potentialProfit = totalRetailVal - totalCostVal;
+    final margin = totalRetailVal > 0 ? (potentialProfit / totalRetailVal) * 100 : 0.0;
+
+    return {
+      'totalItems': totalItems,
+      'totalStockCount': totalStock,
+      'totalCostValuation': double.parse(totalCostVal.toStringAsFixed(2)),
+      'totalRetailValuation': double.parse(totalRetailVal.toStringAsFixed(2)),
+      'potentialProfit': double.parse(potentialProfit.toStringAsFixed(2)),
+      'overallMargin': double.parse(margin.toStringAsFixed(1)),
+      'lowStockAlerts': lowStockCount,
+      'outOfStockAlerts': outOfStockCount,
+    };
+  }
+
+  List<ReportModel> generatePeriodicReportModels() {
+    final now = DateTime.now();
+    final inventorySummary = getInventorySummary();
+    final todayData = getFilteredReport(period: 'today');
+    final weekData = getFilteredReport(period: 'week');
+    final monthData = getFilteredReport(period: 'month');
+    final yearData = getFilteredReport(period: 'year');
+    final allData = getFilteredReport(period: 'all');
+
+    Map<String, dynamic> cleanReportMap(Map<String, dynamic> report) {
+      final copy = Map<String, dynamic>.from(report);
+      final rawTop = List<Map<String, dynamic>>.from(report['topProducts'] as List);
+      copy['topProducts'] = rawTop.map((item) {
+        final prod = item['product'] as ProductModel;
+        return {
+          'productId': prod.id,
+          'productName': prod.name,
+          'sku': prod.sku,
+          'category': prod.category,
+          'units': item['units'],
+          'revenue': item['revenue'],
+          'cogs': item['cogs'],
+          'profit': item['profit'],
+          'margin': item['margin'],
+          'avgPrice': item['avgPrice'],
+        };
+      }).toList();
+      return copy;
+    }
+
+    return [
+      ReportModel(
+        id: 'rep_daily_${now.year}_${now.month.toString().padLeft(2, '0')}_${now.day.toString().padLeft(2, '0')}',
+        reportType: 'daily_summary',
+        title: 'Daily Sales & Financial Summary',
+        period: 'today',
+        generatedAt: now,
+        generatedBy: _currentUser?.name ?? 'System',
+        metrics: cleanReportMap(todayData),
+        inventorySummary: inventorySummary,
+      ),
+      ReportModel(
+        id: 'rep_weekly_${now.year}_w${((now.day - 1) ~/ 7 + 1)}',
+        reportType: 'weekly_summary',
+        title: 'Weekly Sales & Performance Report',
+        period: 'week',
+        generatedAt: now,
+        generatedBy: _currentUser?.name ?? 'System',
+        metrics: cleanReportMap(weekData),
+        inventorySummary: inventorySummary,
+      ),
+      ReportModel(
+        id: 'rep_monthly_${now.year}_${now.month.toString().padLeft(2, '0')}',
+        reportType: 'monthly_summary',
+        title: 'Monthly Revenue & Profitability Analysis',
+        period: 'month',
+        generatedAt: now,
+        generatedBy: _currentUser?.name ?? 'System',
+        metrics: cleanReportMap(monthData),
+        inventorySummary: inventorySummary,
+      ),
+      ReportModel(
+        id: 'rep_annual_${now.year}',
+        reportType: 'annual_summary',
+        title: 'Annual Fiscal Overview',
+        period: 'year',
+        generatedAt: now,
+        generatedBy: _currentUser?.name ?? 'System',
+        metrics: cleanReportMap(yearData),
+        inventorySummary: inventorySummary,
+      ),
+      ReportModel(
+        id: 'rep_inventory_valuation',
+        reportType: 'inventory_valuation',
+        title: 'Real-Time Inventory Valuation & Stock Summary',
+        period: 'all',
+        generatedAt: now,
+        generatedBy: _currentUser?.name ?? 'System',
+        metrics: cleanReportMap(allData),
+        inventorySummary: inventorySummary,
+      ),
+    ];
+  }
+
+  Future<void> generateAndSyncReports() async {
+    if (!MongoDatabase.isConnected) return;
+    try {
+      final reports = generatePeriodicReportModels();
+      for (final report in reports) {
+        await MongoDatabase.saveReport(report);
+      }
+    } catch (e) {
+      debugPrint("⚠️ Error synchronizing reports: $e");
+    }
   }
 }

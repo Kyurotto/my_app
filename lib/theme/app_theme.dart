@@ -23,6 +23,9 @@ class AppTheme {
   static const Color snackAmber = Color(0xFFEA580C);
   static const Color successGreen = Color(0xFF10B981);
   static const Color dangerRed = Color(0xFFEF4444);
+  static const Color softMatcha = Color(0xFF10B981);
+  static const Color roseBerry = Color(0xFFE11D48);
+
 
   static ThemeData get lightTheme {
     return ThemeData(
