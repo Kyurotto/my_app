@@ -4,6 +4,7 @@ import '../models/user_model.dart';
 import '../models/product_model.dart';
 import '../models/order_model.dart';
 import '../models/stock_log_model.dart';
+import '../models/report_model.dart';
 import '../database.dart';
 
 class AppService extends ChangeNotifier {
@@ -422,7 +423,13 @@ class AppService extends ChangeNotifier {
         _products.addAll(dbProducts);
       }
 
-      // 5. Seed & Load stock movement audit logs from MongoDB
+      // 5. Seed & Sync stocks collection in MongoDB
+      await MongoDatabase.seedInitialStocksIfEmpty(_products);
+      for (final prod in _products) {
+        await MongoDatabase.saveStockFromProduct(prod);
+      }
+
+      // 6. Seed & Load stock movement audit logs from MongoDB
       await MongoDatabase.seedInitialStockLogsIfEmpty(_stockLogs);
       final dbStockLogs = await MongoDatabase.getStockLogs();
       if (dbStockLogs.isNotEmpty) {
@@ -430,8 +437,13 @@ class AppService extends ChangeNotifier {
         _stockLogs.addAll(dbStockLogs);
       }
 
+      // 7. Seed & Sync periodic reports into MongoDB reports collection
+      final initialReports = generatePeriodicReportModels();
+      await MongoDatabase.seedInitialReportsIfEmpty(initialReports);
+      await generateAndSyncReports();
+
       notifyListeners();
-      debugPrint("✅ AppService successfully synced with MongoDB! (${_orders.length} orders, ${_products.length} products, ${_stockLogs.length} stock logs)");
+      debugPrint("✅ AppService successfully synced with MongoDB! (${_orders.length} orders, ${_products.length} products, ${_stockLogs.length} stock logs, stocks & reports tables active)");
     } catch (e) {
       debugPrint("⚠️ Error in syncWithDatabase: $e");
     }
@@ -465,6 +477,7 @@ class AppService extends ChangeNotifier {
     notifyListeners();
     if (MongoDatabase.isConnected) {
       MongoDatabase.saveProduct(product);
+      generateAndSyncReports();
     }
   }
 
@@ -498,6 +511,7 @@ class AppService extends ChangeNotifier {
       notifyListeners();
       if (MongoDatabase.isConnected) {
         MongoDatabase.saveProduct(product);
+        generateAndSyncReports();
       }
     }
   }
@@ -507,6 +521,7 @@ class AppService extends ChangeNotifier {
     notifyListeners();
     if (MongoDatabase.isConnected) {
       MongoDatabase.deleteProduct(id);
+      generateAndSyncReports();
     }
   }
 
@@ -590,6 +605,7 @@ class AppService extends ChangeNotifier {
       notifyListeners();
       if (MongoDatabase.isConnected) {
         MongoDatabase.saveProduct(_products[idx]);
+        generateAndSyncReports();
       }
     }
   }
@@ -668,6 +684,7 @@ class AppService extends ChangeNotifier {
     // Persist order to MongoDB database
     if (MongoDatabase.isConnected) {
       MongoDatabase.saveOrder(newOrder);
+      generateAndSyncReports();
     }
 
     return newOrder;
@@ -973,5 +990,136 @@ class AppService extends ChangeNotifier {
           })),
       'topProducts': productSalesRank,
     };
+  }
+
+  Map<String, dynamic> getInventorySummary() {
+    int totalItems = _products.length;
+    int totalStock = 0;
+    double totalCostVal = 0.0;
+    double totalRetailVal = 0.0;
+    int lowStockCount = 0;
+    int outOfStockCount = 0;
+
+    for (final p in _products) {
+      totalStock += p.stock;
+      final cost = p.costPrice > 0 ? p.costPrice : p.price * 0.5;
+      totalCostVal += cost * p.stock;
+      totalRetailVal += p.price * p.stock;
+      if (p.stock <= 0) {
+        outOfStockCount++;
+      } else if (p.stock <= p.minStockLevel) {
+        lowStockCount++;
+      }
+    }
+
+    final potentialProfit = totalRetailVal - totalCostVal;
+    final margin = totalRetailVal > 0 ? (potentialProfit / totalRetailVal) * 100 : 0.0;
+
+    return {
+      'totalItems': totalItems,
+      'totalStockCount': totalStock,
+      'totalCostValuation': double.parse(totalCostVal.toStringAsFixed(2)),
+      'totalRetailValuation': double.parse(totalRetailVal.toStringAsFixed(2)),
+      'potentialProfit': double.parse(potentialProfit.toStringAsFixed(2)),
+      'overallMargin': double.parse(margin.toStringAsFixed(1)),
+      'lowStockAlerts': lowStockCount,
+      'outOfStockAlerts': outOfStockCount,
+    };
+  }
+
+  List<ReportModel> generatePeriodicReportModels() {
+    final now = DateTime.now();
+    final inventorySummary = getInventorySummary();
+    final todayData = getFilteredReport(period: 'today');
+    final weekData = getFilteredReport(period: 'week');
+    final monthData = getFilteredReport(period: 'month');
+    final yearData = getFilteredReport(period: 'year');
+    final allData = getFilteredReport(period: 'all');
+
+    Map<String, dynamic> cleanReportMap(Map<String, dynamic> report) {
+      final copy = Map<String, dynamic>.from(report);
+      final rawTop = List<Map<String, dynamic>>.from(report['topProducts'] as List);
+      copy['topProducts'] = rawTop.map((item) {
+        final prod = item['product'] as ProductModel;
+        return {
+          'productId': prod.id,
+          'productName': prod.name,
+          'sku': prod.sku,
+          'category': prod.category,
+          'units': item['units'],
+          'revenue': item['revenue'],
+          'cogs': item['cogs'],
+          'profit': item['profit'],
+          'margin': item['margin'],
+          'avgPrice': item['avgPrice'],
+        };
+      }).toList();
+      return copy;
+    }
+
+    return [
+      ReportModel(
+        id: 'rep_daily_${now.year}_${now.month.toString().padLeft(2, '0')}_${now.day.toString().padLeft(2, '0')}',
+        reportType: 'daily_summary',
+        title: 'Daily Sales & Financial Summary',
+        period: 'today',
+        generatedAt: now,
+        generatedBy: _currentUser?.name ?? 'System',
+        metrics: cleanReportMap(todayData),
+        inventorySummary: inventorySummary,
+      ),
+      ReportModel(
+        id: 'rep_weekly_${now.year}_w${((now.day - 1) ~/ 7 + 1)}',
+        reportType: 'weekly_summary',
+        title: 'Weekly Sales & Performance Report',
+        period: 'week',
+        generatedAt: now,
+        generatedBy: _currentUser?.name ?? 'System',
+        metrics: cleanReportMap(weekData),
+        inventorySummary: inventorySummary,
+      ),
+      ReportModel(
+        id: 'rep_monthly_${now.year}_${now.month.toString().padLeft(2, '0')}',
+        reportType: 'monthly_summary',
+        title: 'Monthly Revenue & Profitability Analysis',
+        period: 'month',
+        generatedAt: now,
+        generatedBy: _currentUser?.name ?? 'System',
+        metrics: cleanReportMap(monthData),
+        inventorySummary: inventorySummary,
+      ),
+      ReportModel(
+        id: 'rep_annual_${now.year}',
+        reportType: 'annual_summary',
+        title: 'Annual Fiscal Overview',
+        period: 'year',
+        generatedAt: now,
+        generatedBy: _currentUser?.name ?? 'System',
+        metrics: cleanReportMap(yearData),
+        inventorySummary: inventorySummary,
+      ),
+      ReportModel(
+        id: 'rep_inventory_valuation',
+        reportType: 'inventory_valuation',
+        title: 'Real-Time Inventory Valuation & Stock Summary',
+        period: 'all',
+        generatedAt: now,
+        generatedBy: _currentUser?.name ?? 'System',
+        metrics: cleanReportMap(allData),
+        inventorySummary: inventorySummary,
+      ),
+    ];
+  }
+
+  Future<void> generateAndSyncReports() async {
+    if (!MongoDatabase.isConnected) return;
+    try {
+      final reports = generatePeriodicReportModels();
+      for (final report in reports) {
+        await MongoDatabase.saveReport(report);
+      }
+    } catch (e) {
+      debugPrint("⚠️ Error synchronizing reports: $e");
+    }
   }
 }

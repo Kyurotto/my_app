@@ -38,6 +38,7 @@ class ProductModel {
   bool get isOutOfStock => stock <= 0;
   bool get isLowStock => stock > 0 && stock <= minStock;
   bool get isInStock => stock > minStock;
+  int get minStockLevel => minStock;
 
   double get stockValueRetail => stock * price;
   double get stockValueCost => stock * costPrice;
