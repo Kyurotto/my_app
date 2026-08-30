@@ -94,7 +94,7 @@ class _InventoryListViewState extends State<InventoryListView> {
                   children: [
                     Text('Sell: \$${product.price.toStringAsFixed(2)}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF16A34A))),
                     Text('Cost: \$${product.costPrice.toStringAsFixed(2)}', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
-                    Text('Margin: ${(product.profitMargin * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFFD97706))),
+                    Text('Margin: ${product.profitMargin.toStringAsFixed(0)}%', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFFD97706))),
                   ],
                 ),
               ],

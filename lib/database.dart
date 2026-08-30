@@ -6,6 +6,7 @@ import 'models/user_model.dart';
 import 'models/stock_log_model.dart';
 import 'models/stock_model.dart';
 import 'models/report_model.dart';
+import 'utils/password_hasher.dart';
 
 class MongoDatabase {
   static Db? db;
@@ -343,22 +344,38 @@ class MongoDatabase {
       if (count == 0 && initialUsers.isNotEmpty) {
         for (final user in initialUsers) {
           final pw = passwords[user.email] ?? passwords[user.username] ?? 'password';
-          final map = user.toMap()..addAll({'password': pw});
+          final hashedPw = PasswordHasher.isHashed(pw) ? pw : PasswordHasher.hashPassword(pw);
+          final map = user.toMap()..addAll({'password': hashedPw});
           await userCollection!.insertOne(map);
         }
-        debugPrint("✅ Initial users seeded into database (${initialUsers.length} users).");
+        debugPrint("✅ Initial users seeded into database (${initialUsers.length} users with salted password hashes).");
       }
     } catch (e) {
       debugPrint("⚠️ Error seeding users into database: $e");
     }
   }
 
-  static Future<bool> saveUser(UserModel user, String password) async {
+  static Future<bool> saveUser(UserModel user, {String? passwordOrHash, dynamic docId}) async {
     if (!isConnected || userCollection == null) return false;
     try {
-      final map = user.toMap()..addAll({'password': password});
+      final map = user.toMap();
+      if (passwordOrHash != null && passwordOrHash.isNotEmpty) {
+        final hashedPw = PasswordHasher.isHashed(passwordOrHash)
+            ? passwordOrHash
+            : PasswordHasher.hashPassword(passwordOrHash);
+        map['password'] = hashedPw;
+      }
+      
+      final selector = docId != null
+          ? where.eq('_id', docId)
+          : (user.id.isNotEmpty
+              ? where.eq('id', user.id)
+              : (user.email.isNotEmpty
+                  ? where.eq('email', user.email)
+                  : where.eq('username', user.username)));
+
       await userCollection!.updateOne(
-        where.eq('id', user.id),
+        selector,
         {r'$set': map},
         upsert: true,
       );

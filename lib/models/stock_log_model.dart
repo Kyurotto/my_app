@@ -1,6 +1,7 @@
 class StockLogModel {
   final String id;
   final String productId;
+  final String sku;
   final String productName;
   final int change; // e.g. +10, -3
   final int previousStock;
@@ -13,6 +14,7 @@ class StockLogModel {
   StockLogModel({
     required this.id,
     required this.productId,
+    String? sku,
     required this.productName,
     required this.change,
     required this.previousStock,
@@ -21,7 +23,8 @@ class StockLogModel {
     required this.reason,
     required this.performedBy,
     DateTime? createdAt,
-  }) : createdAt = createdAt ?? DateTime.now();
+  })  : sku = sku ?? (productId.isNotEmpty ? 'SKU-${productId.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '').toUpperCase()}' : ''),
+        createdAt = createdAt ?? DateTime.now();
 
   bool get isAddition => change > 0;
   bool get isDeduction => change < 0;
@@ -45,7 +48,7 @@ class StockLogModel {
   }
   String get action => type;
   String get actionLabel => typeLabel;
-  String get productSku => productId;
+  String get productSku => sku;
   String get referenceNo => id;
   String get notes => reason;
   String get staffName => performedBy;
@@ -56,6 +59,7 @@ class StockLogModel {
     return {
       'id': id,
       'productId': productId,
+      'sku': sku,
       'productName': productName,
       'change': change,
       'previousStock': previousStock,
@@ -68,9 +72,11 @@ class StockLogModel {
   }
 
   factory StockLogModel.fromMap(Map<String, dynamic> map) {
+    final prodId = map['productId']?.toString() ?? '';
     return StockLogModel(
       id: map['id']?.toString() ?? (map['_id']?.toString() ?? ''),
-      productId: map['productId']?.toString() ?? '',
+      productId: prodId,
+      sku: map['sku']?.toString() ?? map['productSku']?.toString(),
       productName: map['productName'] ?? '',
       change: (map['change'] is num) ? (map['change'] as num).toInt() : 0,
       previousStock: (map['previousStock'] is num) ? (map['previousStock'] as num).toInt() : 0,

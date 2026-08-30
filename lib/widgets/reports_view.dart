@@ -622,7 +622,7 @@ class _ReportsViewState extends State<ReportsView> {
           const SizedBox(height: 18),
           _buildHealthRow('Product Subtotal (Net of Tax)', '\$${periodSubtotal.toStringAsFixed(2)}', isBold: false),
           const SizedBox(height: 8),
-          _buildHealthRow('Estimated Sales Tax (8%)', '+\$${periodTax.toStringAsFixed(2)}', isBold: false, textColor: const Color(0xFF78716C)),
+          _buildHealthRow('Sales Tax Collected (10%)', '+\$${periodTax.toStringAsFixed(2)}', isBold: false, textColor: const Color(0xFF78716C)),
           const SizedBox(height: 8),
           const Divider(height: 1, color: Color(0xFFF3EDE2)),
           const SizedBox(height: 8),
@@ -649,8 +649,22 @@ class _ReportsViewState extends State<ReportsView> {
             spacing: 8,
             runSpacing: 8,
             children: paymentBreakdown.entries.map((e) {
-              final count = e.value as int;
-              final pct = periodOrders > 0 ? (count / periodOrders * 100).toStringAsFixed(0) : '0';
+              final val = e.value;
+              final int count;
+              final String pct;
+              if (val is Map) {
+                count = (val['count'] as num?)?.toInt() ?? 0;
+                final p = (val['percent'] as num?)?.toDouble();
+                pct = p != null
+                    ? p.toStringAsFixed(0)
+                    : (periodOrders > 0 ? (count / periodOrders * 100).toStringAsFixed(0) : '0');
+              } else if (val is num) {
+                count = val.toInt();
+                pct = periodOrders > 0 ? (count / periodOrders * 100).toStringAsFixed(0) : '0';
+              } else {
+                count = 0;
+                pct = '0';
+              }
               return Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
@@ -743,8 +757,9 @@ class _ReportsViewState extends State<ReportsView> {
   Widget _buildLeaderboardHeader() {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isNarrow = constraints.maxWidth < 600;
+        final isNarrow = constraints.maxWidth < 750;
         final title = Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
             Container(
               padding: const EdgeInsets.all(8),
@@ -755,18 +770,20 @@ class _ReportsViewState extends State<ReportsView> {
               child: const Icon(Icons.leaderboard_rounded, size: 20, color: AppTheme.primaryCoffee),
             ),
             const SizedBox(width: 12),
-            const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Product Sales Leaderboard',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFF1E1B18)),
-                ),
-                Text(
-                  'Sales volume, COGS, and profit margin performance',
-                  style: TextStyle(fontSize: 12, color: Color(0xFF78716C)),
-                ),
-              ],
+            const Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Product Sales Leaderboard',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFF1E1B18)),
+                  ),
+                  Text(
+                    'Sales volume, COGS, and profit margin performance',
+                    style: TextStyle(fontSize: 12, color: Color(0xFF78716C)),
+                  ),
+                ],
+              ),
             ),
           ],
         );
@@ -827,7 +844,7 @@ class _ReportsViewState extends State<ReportsView> {
         }
         return Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [title, controls],
+          children: [Flexible(child: title), const SizedBox(width: 12), controls],
         );
       },
     );

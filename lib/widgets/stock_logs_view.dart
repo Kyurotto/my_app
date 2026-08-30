@@ -21,6 +21,7 @@ class _StockLogsViewState extends State<StockLogsView> {
       if (_search.isNotEmpty) {
         final query = _search.toLowerCase();
         return l.productName.toLowerCase().contains(query) ||
+            l.productId.toLowerCase().contains(query) ||
             l.productSku.toLowerCase().contains(query) ||
             l.referenceNo.toLowerCase().contains(query) ||
             l.notes.toLowerCase().contains(query);

@@ -50,9 +50,14 @@ class UserModel {
   }
 
   factory UserModel.fromMap(Map<String, dynamic> map) {
+    final rawId = map['id']?.toString();
+    final effectiveId = (rawId != null && rawId.isNotEmpty)
+        ? rawId
+        : (map['_id'] != null ? map['_id'].toString() : '');
+
     return UserModel(
-      id: map['id']?.toString() ?? '',
-      name: map['name'] ?? '',
+      id: effectiveId,
+      name: map['name'] ?? map['username'] ?? '',
       email: map['email'] ?? '',
       username: map['username'] ?? '',
       role: map['role'] ?? 'employee',

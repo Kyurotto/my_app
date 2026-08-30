@@ -6,6 +6,7 @@ import '../models/order_model.dart';
 import '../models/stock_log_model.dart';
 import '../models/report_model.dart';
 import '../database.dart';
+import '../utils/password_hasher.dart';
 
 class AppService extends ChangeNotifier {
   static final AppService _instance = AppService._internal();
@@ -22,7 +23,7 @@ class AppService extends ChangeNotifier {
   bool get isAdmin => _currentUser?.isAdmin ?? false;
 
   final List<UserModel> _users = [];
-  final Map<String, String> _passwords = {}; // username/email -> password
+  final Map<String, String> _passwords = {}; // username/email -> salted hash (PBKDF2-SHA256)
 
   final List<ProductModel> _products = [];
   List<ProductModel> get products => List.unmodifiable(_products);
@@ -53,10 +54,12 @@ class AppService extends ChangeNotifier {
     );
 
     _users.addAll([admin, employee]);
-    _passwords['admin@example.com'] = 'password';
-    _passwords['admin'] = 'password';
-    _passwords['employee@example.com'] = 'password';
-    _passwords['employee'] = 'password';
+    final defaultAdminHash = PasswordHasher.hashPassword('password');
+    final defaultEmployeeHash = PasswordHasher.hashPassword('password');
+    _passwords['admin@example.com'] = defaultAdminHash;
+    _passwords['admin'] = defaultAdminHash;
+    _passwords['employee@example.com'] = defaultEmployeeHash;
+    _passwords['employee'] = defaultEmployeeHash;
 
     // 2. Seed Products (Matching Laravel ProductSeeder)
     _products.addAll([
@@ -223,6 +226,7 @@ class AppService extends ChangeNotifier {
       StockLogModel(
         id: 'log_1',
         productId: 'prod_1',
+        sku: 'SKU-PROD1',
         productName: 'Classic Milk Tea',
         change: 50,
         previousStock: 0,
@@ -235,6 +239,7 @@ class AppService extends ChangeNotifier {
       StockLogModel(
         id: 'log_2',
         productId: 'prod_1',
+        sku: 'SKU-PROD1',
         productName: 'Classic Milk Tea',
         change: -1,
         previousStock: 36,
@@ -247,6 +252,7 @@ class AppService extends ChangeNotifier {
       StockLogModel(
         id: 'log_3',
         productId: 'prod_5',
+        sku: 'SKU-PROD5',
         productName: 'Cheese Foam Milk Tea',
         change: 15,
         previousStock: 0,
@@ -259,6 +265,7 @@ class AppService extends ChangeNotifier {
       StockLogModel(
         id: 'log_4',
         productId: 'prod_5',
+        sku: 'SKU-PROD5',
         productName: 'Cheese Foam Milk Tea',
         change: -1,
         previousStock: 9,
@@ -271,6 +278,7 @@ class AppService extends ChangeNotifier {
       StockLogModel(
         id: 'log_5',
         productId: 'prod_6',
+        sku: 'SKU-PROD6',
         productName: 'French Fries',
         change: 30,
         previousStock: 15,
@@ -297,7 +305,16 @@ class AppService extends ChangeNotifier {
     }
 
     final storedPw = _passwords[user.email] ?? _passwords[user.username];
-    if (storedPw == password) {
+    if (storedPw != null && PasswordHasher.verifyPassword(password, storedPw)) {
+      // If the password was stored as legacy plaintext, seamlessly upgrade it to salted hash
+      if (PasswordHasher.isLegacyPlaintext(storedPw)) {
+        final upgradedHash = PasswordHasher.hashPassword(password);
+        _passwords[user.email] = upgradedHash;
+        _passwords[user.username] = upgradedHash;
+        if (MongoDatabase.isConnected) {
+          await MongoDatabase.saveUser(user, passwordOrHash: upgradedHash);
+        }
+      }
       _currentUser = user;
       notifyListeners();
       return true;
@@ -323,6 +340,8 @@ class AppService extends ChangeNotifier {
       return false;
     }
 
+    final hashedPassword = PasswordHasher.hashPassword(password);
+
     final empIndex = _users.length + 1;
     final newUser = UserModel(
       id: 'usr_${DateTime.now().millisecondsSinceEpoch}',
@@ -334,10 +353,10 @@ class AppService extends ChangeNotifier {
     );
 
     _users.add(newUser);
-    _passwords[newUser.email] = password;
-    _passwords[newUser.username] = password;
+    _passwords[newUser.email] = hashedPassword;
+    _passwords[newUser.username] = hashedPassword;
     if (MongoDatabase.isConnected) {
-      MongoDatabase.saveUser(newUser, password);
+      await MongoDatabase.saveUser(newUser, passwordOrHash: hashedPassword);
     }
     notifyListeners();
     return true;
@@ -351,14 +370,17 @@ class AppService extends ChangeNotifier {
   }) async {
     if (_currentUser == null) return false;
 
+    final oldEmail = _currentUser!.email;
+    final oldUsername = _currentUser!.username;
+    final currentStoredPw = _passwords[oldEmail] ?? _passwords[oldUsername];
+
+    String? updatedPasswordHash;
     if (currentPassword != null && currentPassword.isNotEmpty) {
-      final storedPw = _passwords[_currentUser!.email] ?? _passwords[_currentUser!.username];
-      if (storedPw != currentPassword) {
+      if (currentStoredPw == null || !PasswordHasher.verifyPassword(currentPassword, currentStoredPw)) {
         return false;
       }
       if (newPassword != null && newPassword.isNotEmpty) {
-        _passwords[email.trim()] = newPassword;
-        _passwords[_currentUser!.username] = newPassword;
+        updatedPasswordHash = PasswordHasher.hashPassword(newPassword);
       }
     }
 
@@ -372,9 +394,27 @@ class AppService extends ChangeNotifier {
       _users[idx] = updated;
     }
     _currentUser = updated;
+
+    // Update in-memory credentials map
+    final effectivePw = updatedPasswordHash ?? currentStoredPw;
+    if (effectivePw != null) {
+      if (oldEmail.isNotEmpty && oldEmail != updated.email) {
+        _passwords.remove(oldEmail);
+      }
+      if (oldUsername.isNotEmpty && oldUsername != updated.username) {
+        _passwords.remove(oldUsername);
+      }
+      _passwords[updated.email] = effectivePw;
+      _passwords[updated.username] = effectivePw;
+    }
+
     if (MongoDatabase.isConnected) {
-      final pw = _passwords[updated.email] ?? _passwords[updated.username] ?? 'password';
-      MongoDatabase.saveUser(updated, pw);
+      // Only include password if a new password was explicitly set.
+      // This prevents unintentionally resetting stored passwords in MongoDB when only profile info is edited.
+      await MongoDatabase.saveUser(
+        updated,
+        passwordOrHash: updatedPasswordHash,
+      );
     }
     notifyListeners();
     return true;
@@ -398,10 +438,26 @@ class AppService extends ChangeNotifier {
       if (dbUsers.isNotEmpty) {
         _users.clear();
         for (final u in dbUsers) {
-          _users.add(UserModel.fromMap(u));
-          final pw = u['password']?.toString() ?? 'password';
-          if (u['email'] != null) _passwords[u['email'].toString()] = pw;
-          if (u['username'] != null) _passwords[u['username'].toString()] = pw;
+          final user = UserModel.fromMap(u);
+          if (user.username.isNotEmpty || user.email.isNotEmpty) {
+            _users.add(user);
+          }
+          var pw = u['password']?.toString() ?? '';
+          if (pw.isEmpty) {
+            pw = PasswordHasher.hashPassword('password');
+            await MongoDatabase.saveUser(user, passwordOrHash: pw, docId: u['_id']);
+          } else if (PasswordHasher.isLegacyPlaintext(pw)) {
+            // Auto-migrate legacy plaintext passwords in MongoDB to secure salted hashes
+            final hashed = PasswordHasher.hashPassword(pw);
+            await MongoDatabase.saveUser(user, passwordOrHash: hashed, docId: u['_id']);
+            pw = hashed;
+          }
+          if (u['email'] != null && u['email'].toString().isNotEmpty) {
+            _passwords[u['email'].toString()] = pw;
+          }
+          if (u['username'] != null && u['username'].toString().isNotEmpty) {
+            _passwords[u['username'].toString()] = pw;
+          }
         }
       }
 
@@ -459,6 +515,7 @@ class AppService extends ChangeNotifier {
       final log = StockLogModel(
         id: 'log_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(999)}',
         productId: product.id,
+        sku: product.sku,
         productName: product.name,
         change: product.stock,
         previousStock: 0,
@@ -493,6 +550,7 @@ class AppService extends ChangeNotifier {
         final log = StockLogModel(
           id: 'log_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(999)}',
           productId: product.id,
+          sku: product.sku,
           productName: product.name,
           change: stockDiff,
           previousStock: oldProduct.stock,
@@ -543,6 +601,7 @@ class AppService extends ChangeNotifier {
         final log = StockLogModel(
           id: 'log_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(999)}',
           productId: _products[idx].id,
+          sku: _products[idx].sku,
           productName: _products[idx].name,
           change: diff,
           previousStock: oldStock,
@@ -587,6 +646,7 @@ class AppService extends ChangeNotifier {
         final log = StockLogModel(
           id: 'log_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(999)}',
           productId: _products[idx].id,
+          sku: _products[idx].sku,
           productName: _products[idx].name,
           change: actualChange,
           previousStock: current,
