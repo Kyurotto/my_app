@@ -84,18 +84,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
               ],
             ),
             actions: [
-              // Switch to POS
-              IconButton(
-                onPressed: () => Navigator.pushReplacementNamed(context, '/employee_dashboard'),
-                icon: const Icon(Icons.point_of_sale_rounded, size: 20, color: AppTheme.amberGold),
-                tooltip: 'Open POS Terminal',
-              ),
-
-              // Profile & Logout Menu
+              // Profile & Menu
               if (currentUser != null)
                 PopupMenuButton<String>(
                   offset: const Offset(0, 48),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  color: Colors.white,
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     child: Row(
@@ -111,6 +105,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
                               fontWeight: FontWeight.bold,
                               fontSize: 13,
                             ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          currentUser.name,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
                           ),
                         ),
                         const SizedBox(width: 4),
@@ -134,9 +137,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       value: 'profile',
                       child: Row(
                         children: const [
-                          Icon(Icons.person_outline, size: 18, color: Color(0xFF78472A)),
-                          SizedBox(width: 8),
-                          Text('Admin Profile'),
+                          Icon(Icons.person_outline_rounded, size: 18, color: Color(0xFF78472A)),
+                          SizedBox(width: 10),
+                          Text(
+                            'Admin Profile',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF2C1810),
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -145,9 +154,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       value: 'logout',
                       child: Row(
                         children: const [
-                          Icon(Icons.logout, size: 18, color: AppTheme.dangerRed),
-                          SizedBox(width: 8),
-                          Text('Sign Out', style: TextStyle(color: AppTheme.dangerRed)),
+                          Icon(Icons.logout_rounded, size: 18, color: AppTheme.dangerRed),
+                          SizedBox(width: 10),
+                          Text(
+                            'Sign Out',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: AppTheme.dangerRed,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -381,12 +396,75 @@ class _AdminDashboardState extends State<AdminDashboard> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Dashboard Overview',
-          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF1E1B18)),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final isCompact = constraints.maxWidth < 600;
+            if (isCompact) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Dashboard Overview',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF1E1B18)),
+                  ),
+                  const SizedBox(height: 4),
+                  Text('Real-time store performance and order feed', style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: ElevatedButton.icon(
+                      onPressed: () => Navigator.pushReplacementNamed(context, '/employee_dashboard'),
+                      icon: const Icon(Icons.point_of_sale_rounded, size: 18),
+                      label: const Text('Open POS Terminal'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.amberGold,
+                        foregroundColor: AppTheme.primaryCoffee,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            }
+
+            return Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Dashboard Overview',
+                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF1E1B18)),
+                      ),
+                      const SizedBox(height: 4),
+                      Text('Real-time store performance and order feed', style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                ElevatedButton.icon(
+                  onPressed: () => Navigator.pushReplacementNamed(context, '/employee_dashboard'),
+                  icon: const Icon(Icons.point_of_sale_rounded, size: 18),
+                  label: const Text('Open POS Terminal'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.amberGold,
+                    foregroundColor: AppTheme.primaryCoffee,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+                  ),
+                ),
+              ],
+            );
+          },
         ),
-        const SizedBox(height: 4),
-        Text('Real-time store performance and order feed', style: TextStyle(fontSize: 13, color: Colors.grey[600])),
         const SizedBox(height: 20),
 
         // 4 KPI Stat Cards Grid
@@ -564,12 +642,60 @@ class _AdminDashboardState extends State<AdminDashboard> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Order History',
-          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF1E1B18)),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Text(
+                        'Order History',
+                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF1E1B18)),
+                      ),
+                      const SizedBox(width: 10),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppTheme.amberGold.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '${service.orders.length} orders',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.primaryCoffee,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text('All customer transactions and receipts', style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+                ],
+              ),
+            ),
+            IconButton(
+              onPressed: () async {
+                await service.syncWithDatabase();
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Orders refreshed from database!'),
+                      duration: Duration(seconds: 1),
+                    ),
+                  );
+                }
+              },
+              icon: const Icon(Icons.refresh_rounded, color: AppTheme.primaryCoffee),
+              tooltip: 'Refresh from Database',
+            ),
+          ],
         ),
-        const SizedBox(height: 4),
-        Text('All customer transactions and receipts', style: TextStyle(fontSize: 13, color: Colors.grey[600])),
         const SizedBox(height: 20),
 
         // Search bar

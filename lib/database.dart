@@ -1,5 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:mongo_dart/mongo_dart.dart';
+import 'models/order_model.dart';
+import 'models/product_model.dart';
+import 'models/user_model.dart';
 
 class MongoDatabase {
   static Db? db;
@@ -29,6 +32,157 @@ class MongoDatabase {
       isConnected = false;
       debugPrint("⚠️ MongoDB offline or unreachable: $e. Running with embedded reactive store.");
       return false;
+    }
+  }
+
+  // --- ORDER DATABASE METHODS ---
+
+  /// Save or update an order into MongoDB database
+  static Future<bool> saveOrder(OrderModel order) async {
+    if (!isConnected || orderCollection == null) return false;
+    try {
+      final map = order.toMap();
+      await orderCollection!.updateOne(
+        where.eq('id', order.id),
+        {r'$set': map},
+        upsert: true,
+      );
+      debugPrint("✅ Order ${order.receiptNo} saved to MongoDB!");
+      return true;
+    } catch (e) {
+      debugPrint("⚠️ Error saving order to database: $e");
+      return false;
+    }
+  }
+
+  /// Get all orders from MongoDB database
+  static Future<List<OrderModel>> getOrders() async {
+    if (!isConnected || orderCollection == null) return [];
+    try {
+      final data = await orderCollection!.find().toList();
+      final orders = data.map((json) => OrderModel.fromMap(json)).toList();
+      // Sort newest first
+      orders.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      debugPrint("✅ Fetched ${orders.length} orders from MongoDB!");
+      return orders;
+    } catch (e) {
+      debugPrint("⚠️ Error fetching orders from database: $e");
+      return [];
+    }
+  }
+
+  /// Seed initial orders if database collection is empty
+  static Future<void> seedInitialOrdersIfEmpty(List<OrderModel> initialOrders) async {
+    if (!isConnected || orderCollection == null) return;
+    try {
+      final count = await orderCollection!.count();
+      if (count == 0 && initialOrders.isNotEmpty) {
+        for (final order in initialOrders) {
+          await orderCollection!.insertOne(order.toMap());
+        }
+        debugPrint("✅ Initial sample orders seeded into database (${initialOrders.length} orders).");
+      }
+    } catch (e) {
+      debugPrint("⚠️ Error seeding orders into database: $e");
+    }
+  }
+
+  // --- PRODUCT DATABASE METHODS ---
+
+  static Future<bool> saveProduct(ProductModel product) async {
+    if (!isConnected || productCollection == null) return false;
+    try {
+      final map = product.toMap();
+      await productCollection!.updateOne(
+        where.eq('id', product.id),
+        {r'$set': map},
+        upsert: true,
+      );
+      return true;
+    } catch (e) {
+      debugPrint("⚠️ Error saving product: $e");
+      return false;
+    }
+  }
+
+  static Future<bool> deleteProduct(String id) async {
+    if (!isConnected || productCollection == null) return false;
+    try {
+      await productCollection!.deleteOne(where.eq('id', id));
+      return true;
+    } catch (e) {
+      debugPrint("⚠️ Error deleting product: $e");
+      return false;
+    }
+  }
+
+  static Future<List<ProductModel>> getProducts() async {
+    if (!isConnected || productCollection == null) return [];
+    try {
+      final data = await productCollection!.find().toList();
+      return data.map((json) => ProductModel.fromMap(json)).toList();
+    } catch (e) {
+      debugPrint("⚠️ Error fetching products: $e");
+      return [];
+    }
+  }
+
+  static Future<void> seedInitialProductsIfEmpty(List<ProductModel> initialProducts) async {
+    if (!isConnected || productCollection == null) return;
+    try {
+      final count = await productCollection!.count();
+      if (count == 0 && initialProducts.isNotEmpty) {
+        for (final prod in initialProducts) {
+          await productCollection!.insertOne(prod.toMap());
+        }
+      }
+    } catch (e) {
+      debugPrint("⚠️ Error seeding products: $e");
+    }
+  }
+
+  // --- USER DATABASE METHODS ---
+
+  static Future<void> seedInitialUsersIfEmpty(List<UserModel> initialUsers, Map<String, String> passwords) async {
+    if (!isConnected || userCollection == null) return;
+    try {
+      final count = await userCollection!.count();
+      if (count == 0 && initialUsers.isNotEmpty) {
+        for (final user in initialUsers) {
+          final pw = passwords[user.email] ?? passwords[user.username] ?? 'password';
+          final map = user.toMap()..addAll({'password': pw});
+          await userCollection!.insertOne(map);
+        }
+        debugPrint("✅ Initial users seeded into database (${initialUsers.length} users).");
+      }
+    } catch (e) {
+      debugPrint("⚠️ Error seeding users into database: $e");
+    }
+  }
+
+  static Future<bool> saveUser(UserModel user, String password) async {
+    if (!isConnected || userCollection == null) return false;
+    try {
+      final map = user.toMap()..addAll({'password': password});
+      await userCollection!.updateOne(
+        where.eq('id', user.id),
+        {r'$set': map},
+        upsert: true,
+      );
+      return true;
+    } catch (e) {
+      debugPrint("⚠️ Error saving user: $e");
+      return false;
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> getUsersWithPasswords() async {
+    if (!isConnected || userCollection == null) return [];
+    try {
+      return await userCollection!.find().toList();
+    } catch (e) {
+      debugPrint("⚠️ Error fetching users: $e");
+      return [];
     }
   }
 

@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../models/user_model.dart';
 import '../models/product_model.dart';
 import '../models/order_model.dart';
+import '../database.dart';
 
 class AppService extends ChangeNotifier {
   static final AppService _instance = AppService._internal();
@@ -266,6 +267,9 @@ class AppService extends ChangeNotifier {
     _users.add(newUser);
     _passwords[newUser.email] = password;
     _passwords[newUser.username] = password;
+    if (MongoDatabase.isConnected) {
+      MongoDatabase.saveUser(newUser, password);
+    }
     notifyListeners();
     return true;
   }
@@ -299,6 +303,10 @@ class AppService extends ChangeNotifier {
       _users[idx] = updated;
     }
     _currentUser = updated;
+    if (MongoDatabase.isConnected) {
+      final pw = _passwords[updated.email] ?? _passwords[updated.username] ?? 'password';
+      MongoDatabase.saveUser(updated, pw);
+    }
     notifyListeners();
     return true;
   }
@@ -308,11 +316,59 @@ class AppService extends ChangeNotifier {
     notifyListeners();
   }
 
+  // --- DATABASE SYNC ---
+
+  /// Synchronize local state with MongoDB database
+  Future<void> syncWithDatabase() async {
+    if (!MongoDatabase.isConnected) return;
+
+    try {
+      // 1. Seed & Load Users
+      await MongoDatabase.seedInitialUsersIfEmpty(_users, _passwords);
+      final dbUsers = await MongoDatabase.getUsersWithPasswords();
+      if (dbUsers.isNotEmpty) {
+        _users.clear();
+        for (final u in dbUsers) {
+          _users.add(UserModel.fromMap(u));
+          final pw = u['password']?.toString() ?? 'password';
+          if (u['email'] != null) _passwords[u['email'].toString()] = pw;
+          if (u['username'] != null) _passwords[u['username'].toString()] = pw;
+        }
+      }
+
+      // 2. Seed initial default orders if MongoDB collection is empty
+      await MongoDatabase.seedInitialOrdersIfEmpty(_orders);
+
+      // 3. Load all orders from MongoDB
+      final dbOrders = await MongoDatabase.getOrders();
+      if (dbOrders.isNotEmpty) {
+        _orders.clear();
+        _orders.addAll(dbOrders);
+      }
+
+      // 4. Seed initial products if MongoDB collection is empty
+      await MongoDatabase.seedInitialProductsIfEmpty(_products);
+      final dbProducts = await MongoDatabase.getProducts();
+      if (dbProducts.isNotEmpty) {
+        _products.clear();
+        _products.addAll(dbProducts);
+      }
+
+      notifyListeners();
+      debugPrint("✅ AppService successfully synced with MongoDB! (${_orders.length} orders loaded)");
+    } catch (e) {
+      debugPrint("⚠️ Error in syncWithDatabase: $e");
+    }
+  }
+
   // --- PRODUCTS CRUD ---
 
   Future<void> addProduct(ProductModel product) async {
     _products.insert(0, product);
     notifyListeners();
+    if (MongoDatabase.isConnected) {
+      MongoDatabase.saveProduct(product);
+    }
   }
 
   Future<void> updateProduct(ProductModel product) async {
@@ -320,12 +376,18 @@ class AppService extends ChangeNotifier {
     if (idx != -1) {
       _products[idx] = product;
       notifyListeners();
+      if (MongoDatabase.isConnected) {
+        MongoDatabase.saveProduct(product);
+      }
     }
   }
 
   Future<void> deleteProduct(String id) async {
     _products.removeWhere((p) => p.id == id);
     notifyListeners();
+    if (MongoDatabase.isConnected) {
+      MongoDatabase.deleteProduct(id);
+    }
   }
 
   Future<void> setStock(String productId, int newStock) async {
@@ -334,6 +396,9 @@ class AppService extends ChangeNotifier {
       final clamped = max(0, newStock);
       _products[idx] = _products[idx].copyWith(stock: clamped);
       notifyListeners();
+      if (MongoDatabase.isConnected) {
+        MongoDatabase.saveProduct(_products[idx]);
+      }
     }
   }
 
@@ -344,6 +409,9 @@ class AppService extends ChangeNotifier {
       final updated = max(0, current + delta);
       _products[idx] = _products[idx].copyWith(stock: updated);
       notifyListeners();
+      if (MongoDatabase.isConnected) {
+        MongoDatabase.saveProduct(_products[idx]);
+      }
     }
   }
 
@@ -387,8 +455,15 @@ class AppService extends ChangeNotifier {
       createdAt: DateTime.now(),
     );
 
+    // Add to in-memory order list
     _orders.insert(0, newOrder);
     notifyListeners();
+
+    // Persist order to MongoDB database
+    if (MongoDatabase.isConnected) {
+      MongoDatabase.saveOrder(newOrder);
+    }
+
     return newOrder;
   }
 

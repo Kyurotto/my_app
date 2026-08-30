@@ -66,7 +66,7 @@ class ProductModel {
 
   factory ProductModel.fromMap(Map<String, dynamic> map) {
     return ProductModel(
-      id: map['id']?.toString() ?? '',
+      id: map['id']?.toString() ?? (map['_id']?.toString() ?? ''),
       name: map['name'] ?? '',
       description: map['description'] ?? '',
       price: (map['price'] is num) ? (map['price'] as num).toDouble() : 0.0,
@@ -74,7 +74,9 @@ class ProductModel {
       imagePath: map['imagePath'],
       stock: (map['stock'] is num) ? (map['stock'] as num).toInt() : 20,
       createdAt: map['createdAt'] != null
-          ? DateTime.tryParse(map['createdAt'].toString()) ?? DateTime.now()
+          ? (map['createdAt'] is DateTime
+              ? map['createdAt'] as DateTime
+              : DateTime.tryParse(map['createdAt'].toString()) ?? DateTime.now())
           : DateTime.now(),
     );
   }
