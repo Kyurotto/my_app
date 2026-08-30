@@ -1054,8 +1054,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Header Row
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 12,
+          runSpacing: 12,
           children: [
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1114,7 +1117,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
               physics: const NeverScrollableScrollPhysics(),
               crossAxisSpacing: 12,
               mainAxisSpacing: 12,
-              childAspectRatio: isWide ? 1.9 : 1.5,
+              childAspectRatio: isWide ? 1.9 : 1.15,
               children: [
                 StatCard(
                   title: 'Total Stock Units',
