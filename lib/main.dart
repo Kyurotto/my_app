@@ -11,10 +11,13 @@ import 'database.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Connect to MongoDB if available (non-blocking)
-  MongoDatabase.connect().catchError((e) {
+  // Connect to MongoDB and synchronize database
+  MongoDatabase.connect().then((connected) {
+    if (connected) {
+      AppService.instance.syncWithDatabase();
+    }
+  }).catchError((e) {
     debugPrint("MongoDB initialization note: $e");
-    return false;
   });
 
   runApp(

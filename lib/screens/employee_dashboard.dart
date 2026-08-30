@@ -169,6 +169,14 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
           appBar: AppBar(
             backgroundColor: AppTheme.primaryCoffee,
             elevation: 0,
+            automaticallyImplyLeading: false,
+            leading: (currentUser?.isAdmin ?? false)
+                ? IconButton(
+                    icon: const Icon(Icons.arrow_back_rounded, color: Colors.white, size: 22),
+                    tooltip: 'Back to Admin Dashboard',
+                    onPressed: () => Navigator.pushReplacementNamed(context, '/admin_dashboard'),
+                  )
+                : null,
             title: Row(
               children: [
                 Container(
@@ -214,18 +222,12 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
               ],
             ),
             actions: [
-              if (currentUser?.isAdmin ?? false)
-                IconButton(
-                  onPressed: () => Navigator.pushReplacementNamed(context, '/admin_dashboard'),
-                  icon: const Icon(Icons.admin_panel_settings_rounded, size: 20, color: AppTheme.amberGold),
-                  tooltip: 'Admin Console',
-                ),
-
-              // Cashier Avatar & Profile Menu
+              // Profile & Menu
               if (currentUser != null)
                 PopupMenuButton<String>(
                   offset: const Offset(0, 48),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  color: Colors.white,
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     child: Row(
@@ -243,8 +245,17 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                             ),
                           ),
                         ),
+                        const SizedBox(width: 6),
+                        Text(
+                          currentUser.name,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                          ),
+                        ),
                         const SizedBox(width: 4),
-                        const Icon(Icons.arrow_drop_down, color: Colors.white70, size: 18),
+                        const Icon(Icons.arrow_drop_down_rounded, color: Colors.white70, size: 20),
                       ],
                     ),
                   ),
@@ -263,10 +274,16 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                     PopupMenuItem(
                       value: 'profile',
                       child: Row(
-                        children: const [
-                          Icon(Icons.person_outline, size: 18, color: Color(0xFF78472A)),
-                          SizedBox(width: 8),
-                          Text('Edit Profile'),
+                        children: [
+                          const Icon(Icons.person_rounded, size: 18, color: Color(0xFF78472A)),
+                          const SizedBox(width: 10),
+                          Text(
+                            currentUser.isAdmin ? 'Admin Profile' : 'Employee Profile',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF2C1810),
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -275,9 +292,15 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                       value: 'logout',
                       child: Row(
                         children: const [
-                          Icon(Icons.logout, size: 18, color: AppTheme.dangerRed),
-                          SizedBox(width: 8),
-                          Text('Sign Out', style: TextStyle(color: AppTheme.dangerRed)),
+                          Icon(Icons.logout_rounded, size: 18, color: AppTheme.dangerRed),
+                          SizedBox(width: 10),
+                          Text(
+                            'Sign Out',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: AppTheme.dangerRed,
+                            ),
+                          ),
                         ],
                       ),
                     ),

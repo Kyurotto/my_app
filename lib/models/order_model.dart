@@ -105,7 +105,7 @@ class OrderModel {
 
   factory OrderModel.fromMap(Map<String, dynamic> map) {
     return OrderModel(
-      id: map['id']?.toString() ?? '',
+      id: map['id']?.toString() ?? (map['_id']?.toString() ?? ''),
       receiptNo: map['receiptNo'] ?? 'REC-00000000',
       userId: map['userId']?.toString() ?? '',
       cashierName: map['cashierName'] ?? 'Cashier',
@@ -118,11 +118,13 @@ class OrderModel {
       status: map['status'] ?? 'completed',
       items: (map['items'] as List<dynamic>?)
               ?.map((item) =>
-                  OrderItemModel.fromMap(Map<String, dynamic>.from(item)))
+                  OrderItemModel.fromMap(Map<String, dynamic>.from(item as Map)))
               .toList() ??
           [],
       createdAt: map['createdAt'] != null
-          ? DateTime.tryParse(map['createdAt'].toString()) ?? DateTime.now()
+          ? (map['createdAt'] is DateTime
+              ? map['createdAt'] as DateTime
+              : DateTime.tryParse(map['createdAt'].toString()) ?? DateTime.now())
           : DateTime.now(),
     );
   }
