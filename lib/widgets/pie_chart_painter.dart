@@ -151,3 +151,75 @@ class _PiePainter extends CustomPainter {
     return oldDelegate.total != total || oldDelegate.data != data;
   }
 }
+
+class PieChartPainter extends CustomPainter {
+  final Map<String, double> data;
+  final Map<String, Color>? colors;
+
+  PieChartPainter({
+    required this.data,
+    this.colors,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final total = data.values.fold(0.0, (sum, val) => sum + val);
+    if (total <= 0) return;
+
+    final defaultPalette = [
+      AppTheme.coffeeMedium,
+      AppTheme.amberGold,
+      AppTheme.softMatcha,
+      AppTheme.roseBerry,
+      AppTheme.coffeeDark,
+      const Color(0xFF6366F1),
+      const Color(0xFF14B8A6),
+    ];
+
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = min(size.width / 2, size.height / 2);
+    final rect = Rect.fromCircle(center: center, radius: radius);
+
+    double startAngle = -pi / 2;
+    int idx = 0;
+
+    for (final entry in data.entries) {
+      final sweepAngle = (entry.value / total) * 2 * pi;
+      final color = colors?[entry.key] ?? defaultPalette[idx % defaultPalette.length];
+      idx++;
+
+      final paint = Paint()
+        ..color = color
+        ..style = PaintingStyle.fill;
+
+      canvas.drawArc(rect, startAngle, sweepAngle, true, paint);
+
+      // White slice separator
+      final borderPaint = Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5;
+      canvas.drawArc(rect, startAngle, sweepAngle, true, borderPaint);
+
+      startAngle += sweepAngle;
+    }
+
+    // Inner Donut hole
+    final holePaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(center, radius * 0.52, holePaint);
+
+    final holeBorder = Paint()
+      ..color = const Color(0xFFECE7DE)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawCircle(center, radius * 0.52, holeBorder);
+  }
+
+  @override
+  bool shouldRepaint(covariant PieChartPainter oldDelegate) {
+    return oldDelegate.data != data;
+  }
+}
+

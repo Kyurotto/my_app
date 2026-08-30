@@ -3,10 +3,12 @@ import 'package:intl/intl.dart';
 import '../services/app_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/stat_card.dart';
-import '../widgets/pie_chart_painter.dart';
 import '../widgets/product_modal.dart';
 import '../widgets/receipt_modal.dart';
 import '../widgets/profile_modal.dart';
+import '../widgets/inventory_list_view.dart';
+import '../widgets/stock_logs_view.dart';
+import '../widgets/reports_view.dart';
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
@@ -22,8 +24,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
   String _productSearch = '';
   String _productCategory = 'all';
   String _orderSearch = '';
-  int _selectedMonth = DateTime.now().month;
-  int _selectedYear = DateTime.now().year;
+
+  // Stocks tab state
+  int _stockSubTab = 0; // 0: Inventory Levels, 1: Audit Log Trail
 
   @override
   Widget build(BuildContext context) {
@@ -1050,334 +1053,161 @@ class _AdminDashboardState extends State<AdminDashboard> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Stock Management',
-          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF1E1B18)),
+        // Header Row
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Inventory & Stock Control',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF1E1B18)),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Real-time inventory valuations, thresholds & MongoDB audit logs',
+                  style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                ),
+              ],
+            ),
+            Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    await service.syncWithDatabase();
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Inventory & Stock Logs synced from Database!')),
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.sync_rounded, size: 16),
+                  label: const Text('Sync DB'),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    showDialog(
+                      context: context,
+                      builder: (_) => ProductModal(
+                        onSave: (p) => service.addProduct(p),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.add_box_rounded, size: 16),
+                  label: const Text('Add Product'),
+                ),
+              ],
+            ),
+          ],
         ),
-        const SizedBox(height: 4),
-        Text('Monitor inventory levels and update product stocks instantly', style: TextStyle(fontSize: 13, color: Colors.grey[600])),
         const SizedBox(height: 20),
 
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFFEBE5DA)),
-          ),
-          child: ListView.separated(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: service.products.length,
-            separatorBuilder: (_, _) => const Divider(height: 1, color: Color(0xFFF3EDE2)),
-            itemBuilder: (context, idx) {
-              final product = service.products[idx];
-
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-                child: Row(
-                  children: [
-                    Expanded(
-                      flex: 3,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(product.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5)),
-                          const SizedBox(height: 2),
-                          Text('${product.categoryLabel} • \$${product.price.toStringAsFixed(2)}', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
-                        ],
-                      ),
-                    ),
-                    // Status Badge
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: product.isOutOfStock
-                            ? const Color(0xFFFEE2E2)
-                            : (product.isLowStock ? const Color(0xFFFEF3C7) : const Color(0xFFDCFCE7)),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        product.isOutOfStock
-                            ? 'Out of Stock'
-                            : (product.isLowStock ? 'Low Stock' : 'In Stock'),
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: product.isOutOfStock
-                              ? const Color(0xFFDC2626)
-                              : (product.isLowStock ? const Color(0xFFD97706) : const Color(0xFF16A34A)),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    // Quick Stock Stepper
-                    Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF9F6F0),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: const Color(0xFFE2DAD0)),
-                      ),
-                      child: Row(
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.remove, size: 16),
-                            onPressed: () => service.adjustStock(product.id, -1),
-                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                            padding: EdgeInsets.zero,
-                          ),
-                          Container(
-                            constraints: const BoxConstraints(minWidth: 34),
-                            alignment: Alignment.center,
-                            child: Text(
-                              '${product.stock}',
-                              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13),
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.add, size: 16),
-                            onPressed: () => service.adjustStock(product.id, 1),
-                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                            padding: EdgeInsets.zero,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+        // 4 Overview Cards
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth >= 760;
+            return GridView.count(
+              crossAxisCount: isWide ? 4 : 2,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              childAspectRatio: isWide ? 1.9 : 1.5,
+              children: [
+                StatCard(
+                  title: 'Total Stock Units',
+                  value: '${service.totalStockUnits}',
+                  icon: Icons.inventory_2_rounded,
+                  iconColor: const Color(0xFF0284C7),
+                  subtitle: '${service.products.length} catalog items',
                 ),
-              );
-            },
+                StatCard(
+                  title: 'Retail Asset Value',
+                  value: '\$${service.totalInventoryRetailValuation.toStringAsFixed(2)}',
+                  icon: Icons.storefront_rounded,
+                  iconColor: const Color(0xFF16A34A),
+                  subtitle: 'Potential gross retail',
+                ),
+                StatCard(
+                  title: 'Cost Asset Value',
+                  value: '\$${service.totalInventoryCostValuation.toStringAsFixed(2)}',
+                  icon: Icons.account_balance_wallet_rounded,
+                  iconColor: const Color(0xFFD97706),
+                  subtitle: 'Invested inventory cost',
+                ),
+                StatCard(
+                  title: 'Stock Alerts',
+                  value: '${service.lowStockProducts.length + service.outOfStockProducts.length}',
+                  icon: Icons.warning_amber_rounded,
+                  iconColor: service.outOfStockProducts.isNotEmpty ? AppTheme.dangerRed : const Color(0xFFF59E0B),
+                  subtitle: '${service.lowStockProducts.length} low, ${service.outOfStockProducts.length} out',
+                ),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 24),
+
+        // Sub-Tab Switcher
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: const Color(0xFFEBE5DA),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildStockSubTabButton(0, 'Current Inventory (${service.products.length})', Icons.table_chart_rounded),
+              _buildStockSubTabButton(1, 'Movement Audit Logs (${service.stockLogs.length})', Icons.history_edu_rounded),
+            ],
           ),
         ),
+        const SizedBox(height: 16),
+
+        if (_stockSubTab == 0)
+          const InventoryListView()
+        else
+          const StockLogsView(),
       ],
+    );
+  }
+
+  Widget _buildStockSubTabButton(int tabIndex, String title, IconData icon) {
+    final isSelected = _stockSubTab == tabIndex;
+    return GestureDetector(
+      onTap: () => setState(() => _stockSubTab = tabIndex),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.white : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: isSelected ? [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4)] : null,
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 16, color: isSelected ? AppTheme.primaryCoffee : Colors.grey[700]),
+            const SizedBox(width: 6),
+            Text(
+              title,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: isSelected ? FontWeight.w900 : FontWeight.w600,
+                color: isSelected ? AppTheme.primaryCoffee : Colors.grey[700],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
   // --- TAB 5: REPORTS ---
   Widget _buildReportsTab(AppService service) {
-    final report = service.getFilteredReport(month: _selectedMonth, year: _selectedYear);
-    final periodOrders = report['periodOrders'] as int;
-    final periodRevenue = report['periodRevenue'] as double;
-    final catData = Map<String, double>.from(report['categoryRevenue']);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Sales & Revenue Reports',
-          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF1E1B18)),
-        ),
-        const SizedBox(height: 4),
-        Text('Monthly summaries and revenue breakdowns', style: TextStyle(fontSize: 13, color: Colors.grey[600])),
-        const SizedBox(height: 12),
-        Align(
-          alignment: Alignment.centerRight,
-          child: OutlinedButton.icon(
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Financial report for $_selectedMonth/$_selectedYear printed / exported!'),
-                  backgroundColor: AppTheme.primaryCoffee,
-                ),
-              );
-            },
-            icon: const Icon(Icons.print_rounded, size: 16),
-            label: const Text('Export Report'),
-          ),
-        ),
-        const SizedBox(height: 20),
-
-        // Filter Controls
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: const Color(0xFFEBE5DA)),
-          ),
-          child: Row(
-            children: [
-              const Text('Filter Period: ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-              const SizedBox(width: 12),
-              DropdownButton<int>(
-                value: _selectedMonth,
-                underline: const SizedBox(),
-                items: List.generate(12, (i) {
-                  final m = i + 1;
-                  return DropdownMenuItem(
-                    value: m,
-                    child: Text(DateFormat('MMMM').format(DateTime(2026, m))),
-                  );
-                }),
-                onChanged: (v) {
-                  if (v != null) setState(() => _selectedMonth = v);
-                },
-              ),
-              const SizedBox(width: 12),
-              DropdownButton<int>(
-                value: _selectedYear,
-                underline: const SizedBox(),
-                items: [2026, 2025, 2024, 2023].map((y) => DropdownMenuItem(value: y, child: Text('$y'))).toList(),
-                onChanged: (v) {
-                  if (v != null) setState(() => _selectedYear = v);
-                },
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-
-        // 3 Cards Layout
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final isDesktop = constraints.maxWidth > 900;
-            if (isDesktop) {
-              return GridView.count(
-                crossAxisCount: 3,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                crossAxisSpacing: 16,
-                mainAxisSpacing: 16,
-                childAspectRatio: 1.05,
-                children: _buildReportCards(service, periodOrders, periodRevenue, catData),
-              );
-            } else {
-              return Column(
-                children: _buildReportCards(service, periodOrders, periodRevenue, catData)
-                    .map((card) => Padding(padding: const EdgeInsets.only(bottom: 16), child: card))
-                    .toList(),
-              );
-            }
-          },
-        ),
-
-      ],
-    );
-  }
-
-  List<Widget> _buildReportCards(AppService service, int periodOrders, double periodRevenue, Map<String, double> catData) {
-    return [
-      // Card 1: Revenue Progress
-      Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFFEBE5DA)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text('Revenue Summary', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text("Today's Revenue", style: TextStyle(fontSize: 12, color: Colors.grey)),
-                    Text('\$${service.todayRevenue.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                LinearProgressIndicator(
-                  value: service.totalRevenue > 0 ? (service.todayRevenue / service.totalRevenue).clamp(0.0, 1.0) : 0.0,
-                  backgroundColor: const Color(0xFFF3EDE2),
-                  valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF16A34A)),
-                  borderRadius: BorderRadius.circular(6),
-                  minHeight: 8,
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Period Revenue', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                    Text('\$${periodRevenue.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                LinearProgressIndicator(
-                  value: 1.0,
-                  backgroundColor: const Color(0xFFF3EDE2),
-                  valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF7C3AED)),
-                  borderRadius: BorderRadius.circular(6),
-                  minHeight: 8,
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Text('Calculated from completed receipts', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-          ],
-        ),
-      ),
-
-      // Card 2: Order Totals
-      Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFFEBE5DA)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text('Order Totals', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            Column(
-              children: [
-                _buildReportRow('Period Orders', '$periodOrders orders'),
-                const Divider(height: 12, color: Color(0xFFF5EFEB)),
-                _buildReportRow("Today's Orders", '${service.todayOrdersCount} orders', valueColor: const Color(0xFFD97706)),
-                const Divider(height: 12, color: Color(0xFFF5EFEB)),
-                _buildReportRow('Period Revenue', '\$${periodRevenue.toStringAsFixed(2)}', valueColor: const Color(0xFF7C3AED)),
-                const Divider(height: 12, color: Color(0xFFF5EFEB)),
-                _buildReportRow("Today's Revenue", '\$${service.todayRevenue.toStringAsFixed(2)}', valueColor: const Color(0xFF16A34A)),
-              ],
-            ),
-            const SizedBox(height: 2),
-          ],
-        ),
-      ),
-
-      // Card 3: Revenue by Category Pie Chart
-      Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFFEBE5DA)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Revenue by Category', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            Center(
-              child: CategoryPieChart(data: catData),
-            ),
-          ],
-        ),
-      ),
-    ];
-  }
-
-  Widget _buildReportRow(String label, String value, {Color? valueColor}) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.bold,
-            color: valueColor ?? const Color(0xFF1E1B18),
-          ),
-        ),
-      ],
-    );
+    return const ReportsView();
   }
 }
+
+

@@ -3,12 +3,14 @@ import 'package:mongo_dart/mongo_dart.dart';
 import 'models/order_model.dart';
 import 'models/product_model.dart';
 import 'models/user_model.dart';
+import 'models/stock_log_model.dart';
 
 class MongoDatabase {
   static Db? db;
   static DbCollection? orderCollection;
   static DbCollection? userCollection;
   static DbCollection? productCollection;
+  static DbCollection? stockLogCollection;
 
   static bool isConnected = false;
 
@@ -24,6 +26,7 @@ class MongoDatabase {
       orderCollection = database.collection('orders');
       userCollection = database.collection('users');
       productCollection = database.collection('products');
+      stockLogCollection = database.collection('stock_logs');
       isConnected = true;
 
       debugPrint("✅ Connected to MongoDB successfully!");
@@ -138,6 +141,56 @@ class MongoDatabase {
       }
     } catch (e) {
       debugPrint("⚠️ Error seeding products: $e");
+    }
+  }
+
+  // --- STOCK LOGS DATABASE METHODS ---
+
+  static Future<bool> saveStockLog(StockLogModel log) async {
+    if (!isConnected || stockLogCollection == null) return false;
+    try {
+      final map = log.toMap();
+      await stockLogCollection!.updateOne(
+        where.eq('id', log.id),
+        {r'$set': map},
+        upsert: true,
+      );
+      return true;
+    } catch (e) {
+      debugPrint("⚠️ Error saving stock log to database: $e");
+      return false;
+    }
+  }
+
+  static Future<List<StockLogModel>> getStockLogs({String? productId, int? limit}) async {
+    if (!isConnected || stockLogCollection == null) return [];
+    try {
+      final selector = productId != null ? where.eq('productId', productId) : where;
+      final data = await stockLogCollection!.find(selector).toList();
+      final logs = data.map((json) => StockLogModel.fromMap(json)).toList();
+      logs.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      if (limit != null && logs.length > limit) {
+        return logs.sublist(0, limit);
+      }
+      return logs;
+    } catch (e) {
+      debugPrint("⚠️ Error fetching stock logs: $e");
+      return [];
+    }
+  }
+
+  static Future<void> seedInitialStockLogsIfEmpty(List<StockLogModel> initialLogs) async {
+    if (!isConnected || stockLogCollection == null) return;
+    try {
+      final count = await stockLogCollection!.count();
+      if (count == 0 && initialLogs.isNotEmpty) {
+        for (final log in initialLogs) {
+          await stockLogCollection!.insertOne(log.toMap());
+        }
+        debugPrint("✅ Initial stock logs seeded into database (${initialLogs.length} logs).");
+      }
+    } catch (e) {
+      debugPrint("⚠️ Error seeding stock logs: $e");
     }
   }
 
