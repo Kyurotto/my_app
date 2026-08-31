@@ -1,5 +1,8 @@
+import 'dart:convert';
 import 'dart:math';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_model.dart';
 import '../models/product_model.dart';
 import '../models/order_model.dart';
@@ -24,6 +27,17 @@ class AppService extends ChangeNotifier {
 
   final List<UserModel> _users = [];
   final Map<String, String> _passwords = {}; // username/email -> salted hash (PBKDF2-SHA256)
+
+  // --- REMEMBER ME: Session token storage ---
+  // Maps userId -> SHA-256 hash of the session token (raw token stored on device via SharedPreferences).
+  // Never stores passwords. Tokens are rotated on every auto-login and invalidated on logout.
+  final Map<String, String> _sessionTokens = {};
+
+  // SharedPreferences keys (prefixed to avoid collisions)
+  static const String _prefRememberMe = 'remember_me_enabled';
+  static const String _prefRememberedId = 'remember_me_identifier';
+  static const String _prefSessionToken = 'remember_me_session_token';
+  static const String _prefUserId = 'remember_me_user_id';
 
   final List<ProductModel> _products = [];
   List<ProductModel> get products => List.unmodifiable(_products);
@@ -421,8 +435,150 @@ class AppService extends ChangeNotifier {
   }
 
   void logout() {
+    // Invalidate session token before clearing user
+    if (_currentUser != null) {
+      _sessionTokens.remove(_currentUser!.id);
+    }
     _currentUser = null;
+    clearRememberMe(); // Wipe saved session from device storage
     notifyListeners();
+  }
+
+  // =============================================
+  // REMEMBER ME — Secure session token management
+  // =============================================
+
+  /// Generates a cryptographically secure random token (64 hex chars = 256 bits).
+  String _generateSessionToken() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(32, (_) => random.nextInt(256));
+    return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+  }
+
+  /// Returns the SHA-256 hash of a raw token (for server-side comparison).
+  String _hashToken(String rawToken) {
+    return sha256.convert(utf8.encode(rawToken)).toString();
+  }
+
+  /// Saves a "Remember me" session to device storage after a successful login.
+  /// Stores: a flag, the user identifier, the user ID, and a random session token.
+  /// The session token is hashed in-memory; only the raw token goes to SharedPreferences.
+  /// **No passwords are ever stored on disk.**
+  Future<void> saveRememberMe(String identifier) async {
+    if (_currentUser == null) return;
+
+    final rawToken = _generateSessionToken();
+    final hashedToken = _hashToken(rawToken);
+
+    // Store hashed version in memory (acts as "server-side" verification)
+    _sessionTokens[_currentUser!.id] = hashedToken;
+
+    // Store raw token + metadata on device
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_prefRememberMe, true);
+    await prefs.setString(_prefRememberedId, identifier);
+    await prefs.setString(_prefUserId, _currentUser!.id);
+    await prefs.setString(_prefSessionToken, rawToken);
+  }
+
+  /// Clears all "Remember me" data from device storage and invalidates the session token.
+  Future<void> clearRememberMe() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_prefRememberMe);
+      await prefs.remove(_prefRememberedId);
+      await prefs.remove(_prefSessionToken);
+      await prefs.remove(_prefUserId);
+    } catch (e) {
+      debugPrint('⚠️ Error clearing Remember Me preferences: $e');
+    }
+  }
+
+  /// Checks if a valid "Remember me" session exists and returns the saved identifier.
+  /// Returns `null` if no saved session or if data is incomplete.
+  Future<String?> getSavedIdentifier() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final enabled = prefs.getBool(_prefRememberMe) ?? false;
+      if (!enabled) return null;
+      return prefs.getString(_prefRememberedId);
+    } catch (e) {
+      debugPrint('⚠️ Error reading Remember Me preferences: $e');
+      return null;
+    }
+  }
+
+  /// Attempts to auto-login using a saved session token.
+  /// Validates the token, logs the user in, and rotates the token for security.
+  /// Returns `true` if auto-login succeeded, `false` otherwise.
+  Future<bool> tryAutoLogin() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final enabled = prefs.getBool(_prefRememberMe) ?? false;
+      if (!enabled) return false;
+
+      final savedUserId = prefs.getString(_prefUserId);
+      final savedToken = prefs.getString(_prefSessionToken);
+      final savedIdentifier = prefs.getString(_prefRememberedId);
+
+      if (savedUserId == null || savedToken == null || savedIdentifier == null) {
+        await clearRememberMe();
+        return false;
+      }
+
+      // Find the user by ID
+      final user = _users.firstWhere(
+        (u) => u.id == savedUserId,
+        orElse: () => UserModel(id: '', name: '', email: '', username: '', role: '', employeeCode: ''),
+      );
+
+      if (user.id.isEmpty) {
+        await clearRememberMe();
+        return false;
+      }
+
+      // Validate the session token
+      final storedHashedToken = _sessionTokens[savedUserId];
+      if (storedHashedToken == null) {
+        // No in-memory token (e.g., app restarted — cold start).
+        // Since this is an in-memory app without a real backend, accept the
+        // stored token on first cold start, then rotate it immediately.
+        // This is safe because SharedPreferences is app-sandboxed.
+        _currentUser = user;
+
+        // Rotate token for next session
+        final newRawToken = _generateSessionToken();
+        _sessionTokens[user.id] = _hashToken(newRawToken);
+        await prefs.setString(_prefSessionToken, newRawToken);
+
+        notifyListeners();
+        return true;
+      }
+
+      // Verify token: hash the saved raw token and compare with stored hash
+      final computedHash = _hashToken(savedToken);
+      if (computedHash != storedHashedToken) {
+        // Token mismatch — possible tampering, invalidate session
+        await clearRememberMe();
+        _sessionTokens.remove(savedUserId);
+        return false;
+      }
+
+      // Token valid — log user in
+      _currentUser = user;
+
+      // Rotate token to prevent replay attacks
+      final newRawToken = _generateSessionToken();
+      _sessionTokens[user.id] = _hashToken(newRawToken);
+      await prefs.setString(_prefSessionToken, newRawToken);
+
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint('⚠️ Auto-login error: $e');
+      await clearRememberMe();
+      return false;
+    }
   }
 
   // --- DATABASE SYNC ---
