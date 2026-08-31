@@ -16,7 +16,52 @@ class _LoginPageState extends State<LoginPage> {
   bool _obscurePassword = true;
   bool _rememberMe = false;
   bool _isLoading = false;
+  bool _isAutoLogging = true; // Show loading while checking auto-login
   String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _initRememberMe();
+  }
+
+  /// On page load: check if auto-login session exists.
+  /// If valid, navigate directly to the appropriate dashboard.
+  /// If only the identifier was saved, pre-fill the username field.
+  Future<void> _initRememberMe() async {
+    try {
+      final appService = AppService.instance;
+
+      // Attempt auto-login with saved session token
+      final autoLoggedIn = await appService.tryAutoLogin();
+      if (!mounted) return;
+
+      if (autoLoggedIn) {
+        final role = appService.currentUser?.role;
+        if (role == 'admin') {
+          Navigator.pushReplacementNamed(context, '/admin_dashboard');
+        } else {
+          Navigator.pushReplacementNamed(context, '/employee_dashboard');
+        }
+        return;
+      }
+
+      // No valid session, but check if identifier was saved for convenience
+      final savedId = await appService.getSavedIdentifier();
+      if (!mounted) return;
+
+      if (savedId != null && savedId.isNotEmpty) {
+        _identifierController.text = savedId;
+        _rememberMe = true;
+      }
+    } catch (e) {
+      debugPrint('⚠️ Remember Me init error: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isAutoLogging = false);
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -35,8 +80,9 @@ class _LoginPageState extends State<LoginPage> {
       _errorMessage = null;
     });
 
+    final identifier = _identifierController.text.trim();
     final success = await AppService.instance.login(
-      _identifierController.text.trim(),
+      identifier,
       _passwordController.text,
     );
 
@@ -45,6 +91,15 @@ class _LoginPageState extends State<LoginPage> {
     setState(() => _isLoading = false);
 
     if (success) {
+      // Handle "Remember me" — save or clear session
+      if (_rememberMe) {
+        await AppService.instance.saveRememberMe(identifier);
+      } else {
+        await AppService.instance.clearRememberMe();
+      }
+
+      if (!mounted) return;
+
       final role = AppService.instance.currentUser?.role;
       if (role == 'admin') {
         Navigator.pushReplacementNamed(context, '/admin_dashboard');
@@ -60,6 +115,32 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Show a loading spinner while checking auto-login status
+    if (_isAutoLogging) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFFBF8F3),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(AppTheme.amberGold),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Checking session...',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey[600],
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFFBF8F3),
       body: SafeArea(
