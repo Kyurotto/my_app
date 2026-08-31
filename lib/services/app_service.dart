@@ -307,6 +307,22 @@ class AppService extends ChangeNotifier {
 
   // --- AUTHENTICATION ---
 
+  Future<bool> biometricLogin(String usernameOrEmail) async {
+    final query = usernameOrEmail.trim().toLowerCase();
+    final user = _users.firstWhere(
+      (u) => u.email.toLowerCase() == query || u.username.toLowerCase() == query,
+      orElse: () => UserModel(id: '', name: '', email: '', username: '', role: '', employeeCode: ''),
+    );
+
+    if (user.id.isEmpty) {
+      return false;
+    }
+
+    _currentUser = user;
+    notifyListeners();
+    return true;
+  }
+
   Future<bool> login(String usernameOrEmail, String password) async {
     final query = usernameOrEmail.trim().toLowerCase();
     final user = _users.firstWhere(

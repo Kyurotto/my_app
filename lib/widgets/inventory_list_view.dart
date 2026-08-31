@@ -13,21 +13,20 @@ class InventoryListView extends StatefulWidget {
 
 class _InventoryListViewState extends State<InventoryListView> {
   Widget _buildFilters() {
-    return Row(
-      children: [
-        Expanded(
-          child: TextField(
-            onChanged: (v) => setState(() => _search = v),
-            decoration: const InputDecoration(
-              hintText: 'Search product or SKU...',
-              prefixIcon: Icon(Icons.search_rounded),
-              filled: true,
-              fillColor: Colors.white,
-            ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isNarrow = constraints.maxWidth < 500;
+        final searchField = TextField(
+          onChanged: (v) => setState(() => _search = v),
+          decoration: const InputDecoration(
+            hintText: 'Search product or SKU...',
+            prefixIcon: Icon(Icons.search_rounded),
+            filled: true,
+            fillColor: Colors.white,
           ),
-        ),
-        const SizedBox(width: 12),
-        Container(
+        );
+
+        final dropdown = Container(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
             color: Colors.white,
@@ -47,8 +46,27 @@ class _InventoryListViewState extends State<InventoryListView> {
               if (v != null) setState(() => _filter = v);
             },
           ),
-        ),
-      ],
+        );
+
+        if (isNarrow) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              searchField,
+              const SizedBox(height: 10),
+              Align(alignment: Alignment.centerLeft, child: dropdown),
+            ],
+          );
+        }
+
+        return Row(
+          children: [
+            Expanded(child: searchField),
+            const SizedBox(width: 12),
+            dropdown,
+          ],
+        );
+      },
     );
   }
 

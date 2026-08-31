@@ -1154,18 +1154,21 @@ class _AdminDashboardState extends State<AdminDashboard> {
         const SizedBox(height: 24),
 
         // Sub-Tab Switcher
-        Container(
-          padding: const EdgeInsets.all(4),
-          decoration: BoxDecoration(
-            color: const Color(0xFFEBE5DA),
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildStockSubTabButton(0, 'Current Inventory (${service.products.length})', Icons.table_chart_rounded),
-              _buildStockSubTabButton(1, 'Movement Audit Logs (${service.stockLogs.length})', Icons.history_edu_rounded),
-            ],
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEBE5DA),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildStockSubTabButton(0, 'Inventory (${service.products.length})', Icons.table_chart_rounded),
+                _buildStockSubTabButton(1, 'Audit Logs (${service.stockLogs.length})', Icons.history_edu_rounded),
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 16),
