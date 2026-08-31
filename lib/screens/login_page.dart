@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:local_auth/local_auth.dart';
 import '../services/app_service.dart';
 import '../theme/app_theme.dart';
 
@@ -32,33 +33,138 @@ class _LoginPageState extends State<LoginPage> {
     try {
       final appService = AppService.instance;
 
-      // Attempt auto-login with saved session token
-      final autoLoggedIn = await appService.tryAutoLogin();
-      if (!mounted) return;
-
-      if (autoLoggedIn) {
-        final role = appService.currentUser?.role;
-        if (role == 'admin') {
-          Navigator.pushReplacementNamed(context, '/admin_dashboard');
-        } else {
-          Navigator.pushReplacementNamed(context, '/employee_dashboard');
-        }
-        return;
-      }
-
-      // No valid session, but check if identifier was saved for convenience
       final savedId = await appService.getSavedIdentifier();
       if (!mounted) return;
 
       if (savedId != null && savedId.isNotEmpty) {
         _identifierController.text = savedId;
         _rememberMe = true;
+
+        final LocalAuthentication auth = LocalAuthentication();
+        final bool canAuthenticateWithBiometrics = await auth.canCheckBiometrics;
+        final bool canAuthenticate = canAuthenticateWithBiometrics || await auth.isDeviceSupported();
+
+        if (canAuthenticate) {
+          final bool didAuthenticate = await auth.authenticate(
+            localizedReason: 'Please authenticate to log in automatically',
+            biometricOnly: false,
+            persistAcrossBackgrounding: true,
+          );
+
+          if (didAuthenticate) {
+            bool success = await appService.tryAutoLogin();
+            if (!success) {
+               success = await appService.biometricLogin(savedId);
+            }
+
+            if (success) {
+              if (!mounted) return;
+              final role = appService.currentUser?.role;
+              if (role == 'admin') {
+                Navigator.pushReplacementNamed(context, '/admin_dashboard');
+              } else {
+                Navigator.pushReplacementNamed(context, '/employee_dashboard');
+              }
+              return;
+            }
+          }
+        } else {
+          final autoLoggedIn = await appService.tryAutoLogin();
+          if (autoLoggedIn) {
+            if (!mounted) return;
+            final role = appService.currentUser?.role;
+            if (role == 'admin') {
+              Navigator.pushReplacementNamed(context, '/admin_dashboard');
+            } else {
+              Navigator.pushReplacementNamed(context, '/employee_dashboard');
+            }
+            return;
+          }
+        }
+      } else {
+        // No saved id, do nothing and just show login form
       }
     } catch (e) {
       debugPrint('⚠️ Remember Me init error: $e');
     } finally {
       if (mounted) {
         setState(() => _isAutoLogging = false);
+      }
+    }
+  }
+
+  Future<void> _handleBiometricLogin() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final appService = AppService.instance;
+      String? identifier = _identifierController.text.trim();
+
+      if (identifier.isEmpty) {
+        identifier = await appService.getSavedIdentifier();
+      }
+
+      if (identifier == null || identifier.isEmpty) {
+        setState(() {
+          _errorMessage = 'Please enter your email or username first, or sign in once with password.';
+        });
+        return;
+      }
+
+      final LocalAuthentication auth = LocalAuthentication();
+      final bool canAuthenticateWithBiometrics = await auth.canCheckBiometrics;
+      final bool canAuthenticate = canAuthenticateWithBiometrics || await auth.isDeviceSupported();
+
+      if (!canAuthenticate) {
+        setState(() {
+          _errorMessage = 'Biometric authentication is not supported or not set up on this device.';
+        });
+        return;
+      }
+
+      final bool didAuthenticate = await auth.authenticate(
+        localizedReason: 'Scan your fingerprint to sign in',
+        biometricOnly: false,
+        persistAcrossBackgrounding: true,
+      );
+
+      if (!mounted) return;
+
+      if (didAuthenticate) {
+        bool success = await appService.tryAutoLogin();
+        if (!success) {
+          success = await appService.biometricLogin(identifier);
+        }
+
+        if (success) {
+          if (_rememberMe) {
+            await appService.saveRememberMe(identifier);
+          }
+
+          if (!mounted) return;
+          final role = appService.currentUser?.role;
+          if (role == 'admin') {
+            Navigator.pushReplacementNamed(context, '/admin_dashboard');
+          } else {
+            Navigator.pushReplacementNamed(context, '/employee_dashboard');
+          }
+        } else {
+          setState(() {
+            _errorMessage = 'User not found. Please check your username/email.';
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ Biometric authentication error: $e');
+      setState(() {
+        _errorMessage = 'Biometric authentication error: $e';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
       }
     }
   }
@@ -305,30 +411,96 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                         const SizedBox(height: 20),
 
-                        // Submit button
-                        ElevatedButton(
-                          onPressed: _isLoading ? null : () => _handleLogin(),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppTheme.amberGold,
-                            foregroundColor: AppTheme.primaryCoffee,
-                            padding: const EdgeInsets.symmetric(vertical: 15),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                            elevation: 2,
-                          ),
-                          child: _isLoading
-                              ? const SizedBox(
-                                  height: 20,
-                                  width: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryCoffee),
-                                  ),
-                                )
-                              : const Text(
-                                  'Sign In',
-                                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        // Submit button and Fingerprint quick action
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton(
+                                onPressed: _isLoading ? null : () => _handleLogin(),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppTheme.amberGold,
+                                  foregroundColor: AppTheme.primaryCoffee,
+                                  padding: const EdgeInsets.symmetric(vertical: 15),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                  elevation: 2,
                                 ),
+                                child: _isLoading
+                                    ? const SizedBox(
+                                        height: 20,
+                                        width: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryCoffee),
+                                        ),
+                                      )
+                                    : const Text(
+                                        'Sign In',
+                                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                      ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Tooltip(
+                              message: 'Sign in with Fingerprint',
+                              child: Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  onTap: _isLoading ? null : _handleBiometricLogin,
+                                  borderRadius: BorderRadius.circular(16),
+                                  child: Container(
+                                    height: 52,
+                                    width: 52,
+                                    decoration: BoxDecoration(
+                                      color: AppTheme.amberGold.withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(16),
+                                      border: Border.all(color: AppTheme.amberGold, width: 1.5),
+                                    ),
+                                    child: const Icon(
+                                      Icons.fingerprint_rounded,
+                                      color: Color(0xFF78472A),
+                                      size: 30,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
+
+                        const SizedBox(height: 12),
+
+                        // Quick Biometric text button
+                        InkWell(
+                          onTap: _isLoading ? null : _handleBiometricLogin,
+                          borderRadius: BorderRadius.circular(12),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 6.0, horizontal: 8.0),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.fingerprint_rounded,
+                                  size: 20,
+                                  color: Color(0xFF78472A),
+                                ),
+                                const SizedBox(width: 8),
+                                Flexible(
+                                  child: Text(
+                                    'Sign in with Fingerprint / Face ID',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.grey[800],
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+
                         const SizedBox(height: 16),
 
                         // Register button

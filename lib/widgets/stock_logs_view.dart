@@ -32,21 +32,20 @@ class _StockLogsViewState extends State<StockLogsView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                onChanged: (v) => setState(() => _search = v),
-                decoration: const InputDecoration(
-                  hintText: 'Search audit logs (Product, SKU, Note)...',
-                  prefixIcon: Icon(Icons.search_rounded),
-                  filled: true,
-                  fillColor: Colors.white,
-                ),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final isNarrow = constraints.maxWidth < 500;
+            final searchField = TextField(
+              onChanged: (v) => setState(() => _search = v),
+              decoration: const InputDecoration(
+                hintText: 'Search audit logs (Product, SKU, Note)...',
+                prefixIcon: Icon(Icons.search_rounded),
+                filled: true,
+                fillColor: Colors.white,
               ),
-            ),
-            const SizedBox(width: 12),
-            Container(
+            );
+
+            final dropdown = Container(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               decoration: BoxDecoration(
                 color: Colors.white,
@@ -68,8 +67,27 @@ class _StockLogsViewState extends State<StockLogsView> {
                   if (v != null) setState(() => _filterType = v);
                 },
               ),
-            ),
-          ],
+            );
+
+            if (isNarrow) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  searchField,
+                  const SizedBox(height: 10),
+                  Align(alignment: Alignment.centerLeft, child: dropdown),
+                ],
+              );
+            }
+
+            return Row(
+              children: [
+                Expanded(child: searchField),
+                const SizedBox(width: 12),
+                dropdown,
+              ],
+            );
+          },
         ),
         const SizedBox(height: 16),
         if (logs.isEmpty)

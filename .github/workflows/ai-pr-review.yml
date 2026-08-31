@@ -31,6 +31,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      issues: write
 
     steps:
       # ── 1. Checkout with full history ────────────────────────────
@@ -58,9 +59,10 @@ jobs:
           set +e
           OUTPUT=$(dart analyze lib/ 2>&1)
           CODE=$?
-          echo "output<<EOF" >> $GITHUB_OUTPUT
-          echo "$OUTPUT"     >> $GITHUB_OUTPUT
-          echo "EOF"         >> $GITHUB_OUTPUT
+          EOF_AZ="EOF_ANALYZE_${{ github.run_id }}"
+          echo "output<<$EOF_AZ" >> $GITHUB_OUTPUT
+          echo "$OUTPUT"         >> $GITHUB_OUTPUT
+          echo "$EOF_AZ"         >> $GITHUB_OUTPUT
           echo "exit_code=$CODE" >> $GITHUB_OUTPUT
 
       # ── 5. flutter test — collect output ────────────────────────
@@ -70,49 +72,62 @@ jobs:
           set +e
           OUTPUT=$(flutter test --no-pub 2>&1)
           CODE=$?
-          echo "output<<EOF" >> $GITHUB_OUTPUT
-          echo "$OUTPUT"     >> $GITHUB_OUTPUT
-          echo "EOF"         >> $GITHUB_OUTPUT
+          EOF_TS="EOF_TESTS_${{ github.run_id }}"
+          echo "output<<$EOF_TS" >> $GITHUB_OUTPUT
+          echo "$OUTPUT"         >> $GITHUB_OUTPUT
+          echo "$EOF_TS"         >> $GITHUB_OUTPUT
           echo "exit_code=$CODE" >> $GITHUB_OUTPUT
 
       # ── 6. Capture the real code diff ───────────────────────────
       - name: Get code diff
         id: diff
         run: |
-          BASE=origin/${{ github.base_ref }}
-          # Full unified diff of changed Dart files only
-          DIFF=$(git diff $BASE...HEAD -- '*.dart' | head -c 28000)
-          # File list with line counts
-          STATS=$(git diff --stat $BASE...HEAD)
-          COUNT=$(git diff --name-only $BASE...HEAD | wc -l | tr -d ' ')
-          ADDS=$(git diff --numstat $BASE...HEAD | awk '{s+=$1} END {print s+0}')
-          DELS=$(git diff --numstat $BASE...HEAD | awk '{s+=$2} END {print s+0}')
-          DART=$(git diff --name-only $BASE...HEAD | grep -c "lib/.*\.dart" || echo 0)
-          TSRC=$(git diff --name-only $BASE...HEAD | grep -c "test/.*\.dart" || echo 0)
-          SENS=$(git diff --name-only $BASE...HEAD \
+          BASE="origin/${{ github.base_ref }}"
+          if ! git rev-parse --verify "$BASE" >/dev/null 2>&1; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          fi
+          if ! git rev-parse --verify "$BASE" >/dev/null 2>&1; then
+            BASE="HEAD~1"
+          fi
+
+          DIFF=$(git diff "$BASE"...HEAD -- '*.dart' 2>/dev/null | head -c 28000 || echo "")
+          STATS=$(git diff --stat "$BASE"...HEAD 2>/dev/null || echo "")
+          COUNT=$(git diff --name-only "$BASE"...HEAD 2>/dev/null | grep -v '^$' | wc -l | tr -d ' ')
+          ADDS=$(git diff --numstat "$BASE"...HEAD 2>/dev/null | awk '{s+=$1} END {print s+0}')
+          DELS=$(git diff --numstat "$BASE"...HEAD 2>/dev/null | awk '{s+=$2} END {print s+0}')
+          DART=$(git diff --name-only "$BASE"...HEAD 2>/dev/null | grep "lib/.*\.dart" | wc -l | tr -d ' ')
+          TSRC=$(git diff --name-only "$BASE"...HEAD 2>/dev/null | grep "test/.*\.dart" | wc -l | tr -d ' ')
+          SENS=$(git diff --name-only "$BASE"...HEAD 2>/dev/null \
             | grep -iE "(password|secret|token|key|auth|credential|\.env|pubspec\.yaml|database\.dart)" \
             || true)
+
+          EOF_D="EOF_DIFF_${{ github.run_id }}"
+          EOF_S="EOF_STATS_${{ github.run_id }}"
+          EOF_SEC="EOF_SENS_${{ github.run_id }}"
+
           {
-            echo "diff<<ENDDIFF"
+            echo "diff<<$EOF_D"
             echo "$DIFF"
-            echo "ENDDIFF"
-            echo "stats<<EOF"
+            echo "$EOF_D"
+            echo "stats<<$EOF_S"
             echo "$STATS"
-            echo "EOF"
+            echo "$EOF_S"
             echo "count=$COUNT"
             echo "adds=$ADDS"
             echo "dels=$DELS"
             echo "dart=$DART"
             echo "tsrc=$TSRC"
-            echo "sensitive<<EOF"
+            echo "sensitive<<$EOF_SEC"
             echo "$SENS"
-            echo "EOF"
+            echo "$EOF_SEC"
           } >> $GITHUB_OUTPUT
-          if [ -n "$SENS" ]; then
+
+          if [ -n "$(echo "$SENS" | tr -d '[:space:]')" ]; then
             echo "has_sensitive=true"  >> $GITHUB_OUTPUT
           else
             echo "has_sensitive=false" >> $GITHUB_OUTPUT
           fi
+
       # ── 7. Send diff to GPT-4o and post the review comment ──────
       - name: GPT-4o Review + Post Comment
         uses: actions/github-script@v7
@@ -141,19 +156,19 @@ jobs:
             const ok_a = process.env.ANALYZE_EXIT === '0';
             const ok_t = process.env.TEST_EXIT    === '0';
             const sens = process.env.HAS_SENSITIVE === 'true';
-            const df   = parseInt(process.env.DART_FILES)  || 0;
-            const tf   = parseInt(process.env.TEST_FILES)  || 0;
-            const fc   = parseInt(process.env.FILES_COUNT) || 0;
-            const add  = parseInt(process.env.ADDITIONS)   || 0;
-            const del  = parseInt(process.env.DELETIONS)   || 0;
+            const df   = parseInt(process.env.DART_FILES, 10)  || 0;
+            const tf   = parseInt(process.env.TEST_FILES, 10)  || 0;
+            const fc   = parseInt(process.env.FILES_COUNT, 10) || 0;
+            const add  = parseInt(process.env.ADDITIONS, 10)   || 0;
+            const del  = parseInt(process.env.DELETIONS, 10)   || 0;
             const trunc = (s,n) => s&&s.length>n?s.slice(0,n)+'\n…(truncated)':(s||'');
 
             // ── call GPT-4o with the REAL code diff ──────────────────────
             let aiReview = '_GPT-4o review unavailable._';
-            const apiKey = process.env.OPENAI_API_KEY || '';
-            const hasDiff = (process.env.CODE_DIFF||'').trim().length > 10;
+            const apiKey = (process.env.OPENAI_API_KEY || '').trim();
+            const hasDiff = (process.env.CODE_DIFF || '').trim().length > 10;
 
-            if (apiKey.startsWith('sk-') && hasDiff) {
+            if (apiKey.length > 0 && hasDiff) {
               const diff    = trunc(process.env.CODE_DIFF,      24000);
               const analyze = trunc(process.env.ANALYZE_OUTPUT,  2000);
               const tests   = trunc(process.env.TEST_OUTPUT,     2000);
@@ -194,30 +209,36 @@ Review the diff and provide:
 
               try {
                 const res = await fetch('https://api.openai.com/v1/chat/completions', {
-                  method:'POST',
-                  headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + apiKey,
+                  },
                   body: JSON.stringify({
-                    model:'gpt-4o',
-                    messages:[{role:'system',content:sys},{role:'user',content:usr}],
-                    max_tokens:2000,
-                    temperature:0.2,
+                    model: 'gpt-4o',
+                    messages: [
+                      { role: 'system', content: sys },
+                      { role: 'user', content: usr }
+                    ],
+                    max_tokens: 2000,
+                    temperature: 0.2,
                   }),
                 });
-                if(res.ok){
+                if (res.ok) {
                   const d = await res.json();
                   aiReview = d.choices?.[0]?.message?.content || '_No response from GPT-4o._';
                 } else {
-                  aiReview = '_GPT-4o API error ('+res.status+'). Check your OPENAI_API_KEY secret._';
+                  const errText = await res.text().catch(() => '');
+                  aiReview = '_GPT-4o API error (' + res.status + '): ' + trunc(errText, 300) + '_';
                 }
               } catch(e) {
-                aiReview = '_GPT-4o request failed: '+e.message+'_';
+                aiReview = '_GPT-4o request failed: ' + e.message + '_';
               }
-            } else if (!apiKey.startsWith('sk-')) {
-              aiReview = '> ⚠️ **OPENAI_API_KEY secret not set.** Go to **Settings → Secrets → Actions** and add it.\n> Get a free key at https://platform.openai.com/api-keys';
+            } else if (!apiKey) {
+              aiReview = '> ⚠️ **OPENAI_API_KEY secret not set.** Go to **Settings → Secrets → Actions** and add it.\n> Get an API key at https://platform.openai.com/api-keys';
             } else {
               aiReview = '_No Dart code changes detected — skipping AI review._';
             }
-
 
             // ── build the final PR comment ────────────────────────────────
             const aIcon = ok_a ? '✅' : '❌';
@@ -225,54 +246,56 @@ Review the diff and provide:
             const sIcon = sens  ? '⚠️' : '✅';
             const cIcon = (df>0&&tf===0) ? '⚠️' : '✅';
 
-            let score=100;
-            if(!ok_a) score-=30; if(!ok_t) score-=30;
-            if(sens)  score-=10; if(df>0&&tf===0) score-=10;
-            const bar   = '█'.repeat(Math.floor(score/10))+'░'.repeat(10-Math.floor(score/10));
-            const badge = score>=90?'🟢 Excellent':score>=70?'🟡 Good':score>=50?'🟠 Needs Work':'🔴 Critical Issues';
+            let score = 100;
+            if (!ok_a) score -= 30;
+            if (!ok_t) score -= 30;
+            if (sens)  score -= 10;
+            if (df > 0 && tf === 0) score -= 10;
+            const bar   = '█'.repeat(Math.max(0, Math.floor(score / 10))) + '░'.repeat(Math.max(0, 10 - Math.floor(score / 10)));
+            const badge = score >= 90 ? '🟢 Excellent' : score >= 70 ? '🟡 Good' : score >= 50 ? '🟠 Needs Work' : '🔴 Critical Issues';
 
-            const verdict = (ok_a&&ok_t)
+            const verdict = (ok_a && ok_t)
               ? '> ✅ **Automated checks passed.** Review the AI analysis below before merging.'
               : '> ❌ **Automated checks FAILED.** Fix the errors below before merging.';
 
             const analyzeBlk = ok_a
               ? '✅ No issues found — static analysis clean.'
-              : '❌ Issues detected:\n```\n'+trunc(process.env.ANALYZE_OUTPUT,2000)+'\n```';
+              : '❌ Issues detected:\n```\n' + trunc(process.env.ANALYZE_OUTPUT, 2000) + '\n```';
 
-            const tsum=(process.env.TEST_OUTPUT||'').split('\n').filter(l=>l.match(/passed|failed/)).pop()||'';
+            const tsum = (process.env.TEST_OUTPUT || '').split('\n').filter(l => l.match(/passed|failed/)).pop() || '';
             const testBlk = ok_t
-              ? '✅ All tests passed'+(tsum?' — `'+tsum.trim()+'`':'')
-              : '❌ Failures:\n```\n'+trunc(process.env.TEST_OUTPUT,2000)+'\n```';
+              ? '✅ All tests passed' + (tsum ? ' — `' + tsum.trim() + '`' : '')
+              : '❌ Failures:\n```\n' + trunc(process.env.TEST_OUTPUT, 2000) + '\n```';
 
-            const sF=(process.env.SECURITY_FILES||'').trim().split('\n').filter(Boolean);
+            const sF = (process.env.SECURITY_FILES || '').trim().split('\n').filter(Boolean);
             const secBlk = sens
-              ? '⚠️ Security-sensitive files changed — verify no hardcoded secrets:\n'+sF.map(f=>'  - `'+f+'`').join('\n')
+              ? '⚠️ Security-sensitive files changed — verify no hardcoded secrets:\n' + sF.map(f => '  - `' + f + '`').join('\n')
               : '✅ No security-sensitive files changed.';
 
-            const covBlk = (df>0&&tf===0)
-              ? '⚠️ '+df+' Dart source file(s) changed but 0 test files updated. Consider adding/updating tests in `test/`.'
-              : '✅ '+(tf>0?tf+' test file(s) updated — great practice! 👍':'No source changes.');
+            const covBlk = (df > 0 && tf === 0)
+              ? '⚠️ ' + df + ' Dart source file(s) changed but 0 test files updated. Consider adding/updating tests in `test/`.'
+              : '✅ ' + (tf > 0 ? tf + ' test file(s) updated — great practice! 👍' : 'No source changes.');
 
             const body = [
-              '## 🤖 AI Code Review — Powered by GPT-4o','',verdict,'','---','',
+              '## 🤖 AI Code Review — Powered by GPT-4o', '', verdict, '', '---', '',
               '### 📊 PR Overview',
-              '| Metric | Value |','|--------|-------|',
-              '| **Files changed** | '+fc+' |',
-              '| **Lines added** | +'+add+' |',
-              '| **Lines removed** | -'+del+' |',
-              '| **Dart source files** | '+df+' |',
-              '| **Test files** | '+tf+' |',
-              '| **Branch** | `'+process.env.PR_HEAD+'` → `'+process.env.PR_BASE+'` |',
-              '| **Author** | @'+process.env.PR_AUTHOR+' |','',
+              '| Metric | Value |', '|--------|-------|',
+              '| **Files changed** | ' + fc + ' |',
+              '| **Lines added** | +' + add + ' |',
+              '| **Lines removed** | -' + del + ' |',
+              '| **Dart source files** | ' + df + ' |',
+              '| **Test files** | ' + tf + ' |',
+              '| **Branch** | `' + process.env.PR_HEAD + '` → `' + process.env.PR_BASE + '` |',
+              '| **Author** | @' + process.env.PR_AUTHOR + ' |', '',
               '### 🎯 Quality Score',
-              '`'+bar+'` **'+score+'/100** — '+badge,'','---','',
+              '`' + bar + '` **' + score + '/100** — ' + badge, '', '---', '',
               '### 🧠 GPT-4o Code Review',
-              '> GPT-4o has read every changed line of your Dart code and produced this review:','',
-              aiReview,'','---','',
-              '### '+aIcon+' Static Analysis (`dart analyze`)',analyzeBlk,'','---','',
-              '### '+tIcon+' Test Suite (`flutter test`)',testBlk,'','---','',
-              '### '+sIcon+' Security Check',secBlk,'','---','',
-              '### '+cIcon+' Test Coverage Check',covBlk,'','---','',
+              '> GPT-4o has read every changed line of your Dart code and produced this review:', '',
+              aiReview, '', '---', '',
+              '### ' + aIcon + ' Static Analysis (`dart analyze`)', analyzeBlk, '', '---', '',
+              '### ' + tIcon + ' Test Suite (`flutter test`)', testBlk, '', '---', '',
+              '### ' + sIcon + ' Security Check', secBlk, '', '---', '',
+              '### ' + cIcon + ' Test Coverage Check', covBlk, '', '---', '',
               '### ✅ Human Reviewer Checklist',
               '- [ ] I have read the GPT-4o review above and addressed all serious issues',
               '- [ ] Code follows the project\'s naming and style conventions',
@@ -281,31 +304,50 @@ Review the diff and provide:
               '- [ ] New features have corresponding tests in `test/`',
               '- [ ] `pubspec.lock` is committed alongside any `pubspec.yaml` changes',
               '- [ ] Database-related changes are backward compatible',
-              '- [ ] The "Remember Me" auth session flow is not weakened','','---','',
-              '<sub>🤖 Powered by GPT-4o via OpenAI API · Run ID: '+process.env.RUN_ID+' · AI review supplements — does not replace — human judgement.</sub>',
+              '- [ ] The "Remember Me" auth session flow is not weakened', '', '---', '',
+              '<sub>🤖 Powered by GPT-4o via OpenAI API · Run ID: ' + process.env.RUN_ID + ' · AI review supplements — does not replace — human judgement.</sub>',
             ].join('\n');
 
+            const issueNumber = context.issue?.number || context.payload?.pull_request?.number || context.payload?.issue?.number;
+            if (!issueNumber) {
+              core.warning('Could not determine issue/PR number to post review comment.');
+              return;
+            }
+
             // Remove stale bot review comments
-            const {data:cmts}=await github.rest.issues.listComments({
-              owner:context.repo.owner,repo:context.repo.repo,issue_number:context.issue.number
-            });
-            for(const c of cmts){
-              if(c.user.type==='Bot'&&(
-                c.body.includes('🤖 AI Code Review — Powered by GPT-4o')||
-                c.body.includes('🤖 AI Code Review — Automated Analysis')
-              )){
-                await github.rest.issues.deleteComment({
-                  owner:context.repo.owner,repo:context.repo.repo,comment_id:c.id
-                });
+            try {
+              const { data: cmts } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber
+              });
+              for (const c of cmts) {
+                if (c.user?.type === 'Bot' && (
+                  c.body?.includes('🤖 AI Code Review — Powered by GPT-4o') ||
+                  c.body?.includes('🤖 AI Code Review — Automated Analysis')
+                )) {
+                  try {
+                    await github.rest.issues.deleteComment({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      comment_id: c.id
+                    });
+                  } catch (delErr) {
+                    core.warning('Failed to delete stale bot comment: ' + delErr.message);
+                  }
+                }
               }
+            } catch (listErr) {
+              core.warning('Failed to list comments: ' + listErr.message);
             }
 
             await github.rest.issues.createComment({
-              owner:context.repo.owner,repo:context.repo.repo,
-              issue_number:context.issue.number,body
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body
             });
 
-            if(!ok_a||!ok_t){
-              core.setFailed('Checks failed: '+(!ok_a?'dart analyze. ':'')+(!ok_t?'flutter test.':''));
+            if (!ok_a || !ok_t) {
+              core.setFailed('Checks failed: ' + (!ok_a ? 'dart analyze. ' : '') + (!ok_t ? 'flutter test.' : ''));
             }
-
