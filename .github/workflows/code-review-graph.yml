@@ -1,0 +1,29 @@
+name: 📊 Code Review Graph
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: ['**']
+
+concurrency:
+  group: code-review-graph-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  graph-review:
+    name: Blast-Radius & Risk Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run code-review-graph
+        uses: tirth8205/code-review-graph@v2.3.6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
