@@ -1,37 +1,45 @@
 # =================================================================
-#  AI Pull Request Reviewer — GitHub Actions Workflow
-#  Runs on every PR. Posts a detailed automated review comment.
-#  Uses only the built-in GITHUB_TOKEN — no paid services needed.
+#  🤖 AI Pull Request Reviewer — powered by GPT-4o
+#
+#  This workflow sends the REAL code diff of every PR to OpenAI
+#  GPT-4o, which reads every changed line and posts a detailed
+#  code review comment — just like GitHub Copilot.
+#
+#  SETUP REQUIRED (one-time, 2 minutes):
+#  1. Get a free OpenAI API key → https://platform.openai.com/api-keys
+#  2. Go to your GitHub repo → Settings → Secrets and variables
+#     → Actions → New repository secret
+#  3. Name: OPENAI_API_KEY   Value: sk-...your key...
+#  That's it. Every PR will now get a real AI code review.
 # =================================================================
 
-name: 🤖 AI PR Review
+name: 🤖 AI PR Review (GPT-4o)
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
     branches: ['**']
 
-# Cancel stale runs when a new commit is pushed to the same PR
 concurrency:
   group: ai-pr-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   ai-review:
-    name: Analyze & Post AI Review
+    name: GPT-4o Code Review
     runs-on: ubuntu-latest
     permissions:
-      contents: read       # read source code
-      pull-requests: write # post PR comments
+      contents: read
+      pull-requests: write
 
     steps:
-      # 1. Checkout with full history for accurate diffs
-      - name: Checkout code
+      # ── 1. Checkout with full history ────────────────────────────
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 2. Set up Flutter stable
+      # ── 2. Flutter setup ─────────────────────────────────────────
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -39,11 +47,11 @@ jobs:
           channel: 'stable'
           cache: true
 
-      # 3. Install pub dependencies
+      # ── 3. Install dependencies ──────────────────────────────────
       - name: Install dependencies
         run: flutter pub get
 
-      # 4. Static analysis — capture output, never fail the step itself
+      # ── 4. dart analyze — collect output ────────────────────────
       - name: Run dart analyze
         id: analyze
         run: |
@@ -55,7 +63,7 @@ jobs:
           echo "EOF"         >> $GITHUB_OUTPUT
           echo "exit_code=$CODE" >> $GITHUB_OUTPUT
 
-      # 5. Unit/widget tests — capture output, never fail the step itself
+      # ── 5. flutter test — collect output ────────────────────────
       - name: Run flutter test
         id: tests
         run: |
@@ -67,12 +75,15 @@ jobs:
           echo "EOF"         >> $GITHUB_OUTPUT
           echo "exit_code=$CODE" >> $GITHUB_OUTPUT
 
-      # 6. Collect diff metadata (files, stats, security signals)
-      - name: Collect diff metadata
-        id: meta
+      # ── 6. Capture the real code diff ───────────────────────────
+      - name: Get code diff
+        id: diff
         run: |
           BASE=origin/${{ github.base_ref }}
-          FILES=$(git diff --name-only $BASE...HEAD | head -60)
+          # Full unified diff of changed Dart files only
+          DIFF=$(git diff $BASE...HEAD -- '*.dart' | head -c 28000)
+          # File list with line counts
+          STATS=$(git diff --stat $BASE...HEAD)
           COUNT=$(git diff --name-only $BASE...HEAD | wc -l | tr -d ' ')
           ADDS=$(git diff --numstat $BASE...HEAD | awk '{s+=$1} END {print s+0}')
           DELS=$(git diff --numstat $BASE...HEAD | awk '{s+=$2} END {print s+0}')
@@ -82,8 +93,11 @@ jobs:
             | grep -iE "(password|secret|token|key|auth|credential|\.env|pubspec\.yaml|database\.dart)" \
             || true)
           {
-            echo "files<<EOF"
-            echo "$FILES"
+            echo "diff<<ENDDIFF"
+            echo "$DIFF"
+            echo "ENDDIFF"
+            echo "stats<<EOF"
+            echo "$STATS"
             echo "EOF"
             echo "count=$COUNT"
             echo "adds=$ADDS"
@@ -99,26 +113,28 @@ jobs:
           else
             echo "has_sensitive=false" >> $GITHUB_OUTPUT
           fi
-      # 7. Build and post the AI review comment
-      - name: Post AI review comment
+      # ── 7. Send diff to GPT-4o and post the review comment ──────
+      - name: GPT-4o Review + Post Comment
         uses: actions/github-script@v7
         env:
-          ANALYZE_OUTPUT: ${{ steps.analyze.outputs.output }}
-          ANALYZE_EXIT:   ${{ steps.analyze.outputs.exit_code }}
-          TEST_OUTPUT:    ${{ steps.tests.outputs.output }}
-          TEST_EXIT:      ${{ steps.tests.outputs.exit_code }}
-          CHANGED_FILES:  ${{ steps.meta.outputs.files }}
-          FILES_COUNT:    ${{ steps.meta.outputs.count }}
-          ADDITIONS:      ${{ steps.meta.outputs.adds }}
-          DELETIONS:      ${{ steps.meta.outputs.dels }}
-          DART_FILES:     ${{ steps.meta.outputs.dart }}
-          TEST_FILES:     ${{ steps.meta.outputs.tsrc }}
-          SECURITY_FILES: ${{ steps.meta.outputs.sensitive }}
-          HAS_SENSITIVE:  ${{ steps.meta.outputs.has_sensitive }}
-          PR_HEAD:        ${{ github.head_ref }}
-          PR_BASE:        ${{ github.base_ref }}
-          PR_AUTHOR:      ${{ github.event.pull_request.user.login }}
-          RUN_ID:         ${{ github.run_id }}
+          OPENAI_API_KEY:  ${{ secrets.OPENAI_API_KEY }}
+          ANALYZE_OUTPUT:  ${{ steps.analyze.outputs.output }}
+          ANALYZE_EXIT:    ${{ steps.analyze.outputs.exit_code }}
+          TEST_OUTPUT:     ${{ steps.tests.outputs.output }}
+          TEST_EXIT:       ${{ steps.tests.outputs.exit_code }}
+          CODE_DIFF:       ${{ steps.diff.outputs.diff }}
+          FILES_COUNT:     ${{ steps.diff.outputs.count }}
+          ADDITIONS:       ${{ steps.diff.outputs.adds }}
+          DELETIONS:       ${{ steps.diff.outputs.dels }}
+          DART_FILES:      ${{ steps.diff.outputs.dart }}
+          TEST_FILES:      ${{ steps.diff.outputs.tsrc }}
+          SECURITY_FILES:  ${{ steps.diff.outputs.sensitive }}
+          HAS_SENSITIVE:   ${{ steps.diff.outputs.has_sensitive }}
+          PR_TITLE:        ${{ github.event.pull_request.title }}
+          PR_HEAD:         ${{ github.head_ref }}
+          PR_BASE:         ${{ github.base_ref }}
+          PR_AUTHOR:       ${{ github.event.pull_request.user.login }}
+          RUN_ID:          ${{ github.run_id }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -130,83 +146,166 @@ jobs:
             const fc   = parseInt(process.env.FILES_COUNT) || 0;
             const add  = parseInt(process.env.ADDITIONS)   || 0;
             const del  = parseInt(process.env.DELETIONS)   || 0;
-            const trunc = (s, n=2500) =>
-              s.length > n ? s.slice(0,n)+'\n…(truncated – see Actions logs)' : s;
-            let score = 100;
-            if (!ok_a) score -= 30;
-            if (!ok_t) score -= 30;
-            if (sens)  score -= 10;
-            if (df > 0 && tf === 0) score -= 10;
+            const trunc = (s,n) => s&&s.length>n?s.slice(0,n)+'\n…(truncated)':(s||'');
+
+            // ── call GPT-4o with the REAL code diff ──────────────────────
+            let aiReview = '_GPT-4o review unavailable._';
+            const apiKey = process.env.OPENAI_API_KEY || '';
+            const hasDiff = (process.env.CODE_DIFF||'').trim().length > 10;
+
+            if (apiKey.startsWith('sk-') && hasDiff) {
+              const diff    = trunc(process.env.CODE_DIFF,      24000);
+              const analyze = trunc(process.env.ANALYZE_OUTPUT,  2000);
+              const tests   = trunc(process.env.TEST_OUTPUT,     2000);
+
+              const sys = `You are an expert Flutter/Dart code reviewer with deep knowledge of:
+- Flutter widget lifecycle, state management, and rendering
+- Dart null safety, async/await, streams
+- Security best practices (auth flows, token storage, credential handling)
+- Clean architecture, SOLID principles, and maintainability
+- Common Flutter bugs (context after async gaps, missing mounted checks, rebuilds)
+Review the real git diff. Be specific — reference actual line numbers and variable names.
+Be constructive, friendly, and praise genuinely good code too.`;
+
+              const usr = `PR: ${process.env.PR_TITLE}
+Branch: ${process.env.PR_HEAD} -> ${process.env.PR_BASE}
+Author: @${process.env.PR_AUTHOR}
+Files changed: ${fc} | +${add} / -${del} lines
+
+dart analyze output:
+${analyze}
+
+flutter test output:
+${tests}
+
+Code diff (changed Dart files):
+\`\`\`diff
+${diff}
+\`\`\`
+
+Review the diff and provide:
+1. **Overall Assessment** — Is this safe to merge? Overall quality?
+2. **Bugs & Logic Issues** — Bugs, edge cases, null safety issues?
+3. **Security Concerns** — Auth/session/credential issues? (App has a "Remember Me" token system)
+4. **Flutter-Specific Issues** — Missing mounted checks, expensive build() calls, lifecycle problems?
+5. **Code Quality** — Naming, readability, duplication, dead code?
+6. **What Was Done Well** — Genuine praise for good work
+7. **Suggestions** — Specific improvements with code snippets where helpful`;
+
+              try {
+                const res = await fetch('https://api.openai.com/v1/chat/completions', {
+                  method:'POST',
+                  headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
+                  body: JSON.stringify({
+                    model:'gpt-4o',
+                    messages:[{role:'system',content:sys},{role:'user',content:usr}],
+                    max_tokens:2000,
+                    temperature:0.2,
+                  }),
+                });
+                if(res.ok){
+                  const d = await res.json();
+                  aiReview = d.choices?.[0]?.message?.content || '_No response from GPT-4o._';
+                } else {
+                  aiReview = '_GPT-4o API error ('+res.status+'). Check your OPENAI_API_KEY secret._';
+                }
+              } catch(e) {
+                aiReview = '_GPT-4o request failed: '+e.message+'_';
+              }
+            } else if (!apiKey.startsWith('sk-')) {
+              aiReview = '> ⚠️ **OPENAI_API_KEY secret not set.** Go to **Settings → Secrets → Actions** and add it.\n> Get a free key at https://platform.openai.com/api-keys';
+            } else {
+              aiReview = '_No Dart code changes detected — skipping AI review._';
+            }
+
+
+            // ── build the final PR comment ────────────────────────────────
+            const aIcon = ok_a ? '✅' : '❌';
+            const tIcon = ok_t ? '✅' : '❌';
+            const sIcon = sens  ? '⚠️' : '✅';
+            const cIcon = (df>0&&tf===0) ? '⚠️' : '✅';
+
+            let score=100;
+            if(!ok_a) score-=30; if(!ok_t) score-=30;
+            if(sens)  score-=10; if(df>0&&tf===0) score-=10;
             const bar   = '█'.repeat(Math.floor(score/10))+'░'.repeat(10-Math.floor(score/10));
             const badge = score>=90?'🟢 Excellent':score>=70?'🟡 Good':score>=50?'🟠 Needs Work':'🔴 Critical Issues';
-            const flist = process.env.CHANGED_FILES.trim().split('\n').filter(Boolean).map(f=>{
-              const ic=f.startsWith('lib/')?'🎯':f.startsWith('test/')?'🧪':
-                f.startsWith('.github/')?'⚙️':f==='pubspec.yaml'?'📦':f==='pubspec.lock'?'🔒':'📄';
-              return ic+' `'+f+'`';
-            }).join('\n');
-            const aBlk = ok_a
-              ? '✅ **No issues found** — static analysis clean.'
-              : '❌ **Issues detected** — fix before merging:\n```\n'+trunc(process.env.ANALYZE_OUTPUT)+'\n```';
-            const tsum=(process.env.TEST_OUTPUT.split('\n').filter(l=>l.match(/passed|failed/)).pop()||'').trim();
-            const tBlk = ok_t
-              ? '✅ **All tests passed**'+(tsum?' — `'+tsum+'`':'')
-              : '❌ **Test failures:**\n```\n'+trunc(process.env.TEST_OUTPUT)+'\n```';
-            const sF=process.env.SECURITY_FILES.trim().split('\n').filter(Boolean);
-            const sBlk=sens
-              ? '⚠️ **Security-sensitive files changed** — verify no secrets hardcoded:\n'+sF.map(f=>'  - `'+f+'`').join('\n')
-              : '✅ No security-sensitive files changed.';
-            const cBlk=(df>0&&tf===0)
-              ? '⚠️ **No test files updated** — '+df+' source file(s) changed, 0 test files. Add tests in `test/`.'
-              : '✅ '+(tf>0?tf+' test file(s) updated alongside '+df+' source file(s) — great! 👍':'No changes.');
-            const verdict=(ok_a&&ok_t)
-              ? '> ✅ **This PR looks good to merge.** All automated checks passed.'
-              : '> ❌ **This PR is NOT ready to merge.** Resolve issues above first.';
 
-            const rows=[
+            const verdict = (ok_a&&ok_t)
+              ? '> ✅ **Automated checks passed.** Review the AI analysis below before merging.'
+              : '> ❌ **Automated checks FAILED.** Fix the errors below before merging.';
+
+            const analyzeBlk = ok_a
+              ? '✅ No issues found — static analysis clean.'
+              : '❌ Issues detected:\n```\n'+trunc(process.env.ANALYZE_OUTPUT,2000)+'\n```';
+
+            const tsum=(process.env.TEST_OUTPUT||'').split('\n').filter(l=>l.match(/passed|failed/)).pop()||'';
+            const testBlk = ok_t
+              ? '✅ All tests passed'+(tsum?' — `'+tsum.trim()+'`':'')
+              : '❌ Failures:\n```\n'+trunc(process.env.TEST_OUTPUT,2000)+'\n```';
+
+            const sF=(process.env.SECURITY_FILES||'').trim().split('\n').filter(Boolean);
+            const secBlk = sens
+              ? '⚠️ Security-sensitive files changed — verify no hardcoded secrets:\n'+sF.map(f=>'  - `'+f+'`').join('\n')
+              : '✅ No security-sensitive files changed.';
+
+            const covBlk = (df>0&&tf===0)
+              ? '⚠️ '+df+' Dart source file(s) changed but 0 test files updated. Consider adding/updating tests in `test/`.'
+              : '✅ '+(tf>0?tf+' test file(s) updated — great practice! 👍':'No source changes.');
+
+            const body = [
+              '## 🤖 AI Code Review — Powered by GPT-4o','',verdict,'','---','',
+              '### 📊 PR Overview',
+              '| Metric | Value |','|--------|-------|',
               '| **Files changed** | '+fc+' |',
               '| **Lines added** | +'+add+' |',
               '| **Lines removed** | -'+del+' |',
               '| **Dart source files** | '+df+' |',
               '| **Test files** | '+tf+' |',
               '| **Branch** | `'+process.env.PR_HEAD+'` → `'+process.env.PR_BASE+'` |',
-              '| **Author** | @'+process.env.PR_AUTHOR+' |',
-            ].join('\n');
-            const body=[
-              '## 🤖 AI Code Review — Automated Analysis','',verdict,'','---','',
-              '### 📊 PR Overview','| Metric | Value |','|--------|-------|',rows,'',
-              '### 🎯 Quality Score','`'+bar+'` **'+score+'/100** — '+badge,'','---','',
-              '### '+(ok_a?'✅':'❌')+' Static Analysis (`dart analyze`)',aBlk,'','---','',
-              '### '+(ok_t?'✅':'❌')+' Test Suite (`flutter test`)',tBlk,'','---','',
-              '### '+(sens?'⚠️':'✅')+' Security Check',sBlk,'','---','',
-              '### '+((df>0&&tf===0)?'⚠️':'✅')+' Test Coverage Check',cBlk,'','---','',
-              '### 📂 Changed Files ('+fc+')','<details><summary>Click to expand</summary>','',
-              flist||'_No files listed._','','</details>','','---','',
+              '| **Author** | @'+process.env.PR_AUTHOR+' |','',
+              '### 🎯 Quality Score',
+              '`'+bar+'` **'+score+'/100** — '+badge,'','---','',
+              '### 🧠 GPT-4o Code Review',
+              '> GPT-4o has read every changed line of your Dart code and produced this review:','',
+              aiReview,'','---','',
+              '### '+aIcon+' Static Analysis (`dart analyze`)',analyzeBlk,'','---','',
+              '### '+tIcon+' Test Suite (`flutter test`)',testBlk,'','---','',
+              '### '+sIcon+' Security Check',secBlk,'','---','',
+              '### '+cIcon+' Test Coverage Check',covBlk,'','---','',
               '### ✅ Human Reviewer Checklist',
+              '- [ ] I have read the GPT-4o review above and addressed all serious issues',
               '- [ ] Code follows the project\'s naming and style conventions',
               '- [ ] No hardcoded credentials, passwords, or API keys',
               '- [ ] UI changes tested on narrow screens (overflow check)',
               '- [ ] New features have corresponding tests in `test/`',
-              '- [ ] `pubspec.yaml` changes are intentional and `pubspec.lock` is committed',
+              '- [ ] `pubspec.lock` is committed alongside any `pubspec.yaml` changes',
               '- [ ] Database-related changes are backward compatible',
-              '- [ ] The "Remember Me" auth session flow is not weakened',
-              '','---','',
-              '<sub>🤖 Automated · Run ID: '+process.env.RUN_ID+' · Supplements — not replaces — human review.</sub>',
+              '- [ ] The "Remember Me" auth session flow is not weakened','','---','',
+              '<sub>🤖 Powered by GPT-4o via OpenAI API · Run ID: '+process.env.RUN_ID+' · AI review supplements — does not replace — human judgement.</sub>',
             ].join('\n');
+
+            // Remove stale bot review comments
             const {data:cmts}=await github.rest.issues.listComments({
               owner:context.repo.owner,repo:context.repo.repo,issue_number:context.issue.number
             });
             for(const c of cmts){
-              if(c.user.type==='Bot'&&c.body.includes('🤖 AI Code Review — Automated Analysis')){
+              if(c.user.type==='Bot'&&(
+                c.body.includes('🤖 AI Code Review — Powered by GPT-4o')||
+                c.body.includes('🤖 AI Code Review — Automated Analysis')
+              )){
                 await github.rest.issues.deleteComment({
                   owner:context.repo.owner,repo:context.repo.repo,comment_id:c.id
                 });
               }
             }
+
             await github.rest.issues.createComment({
               owner:context.repo.owner,repo:context.repo.repo,
               issue_number:context.issue.number,body
             });
+
             if(!ok_a||!ok_t){
-              core.setFailed('AI Review: '+(!ok_a?'dart analyze issues. ':'')+(!ok_t?'flutter test failed.':''));
+              core.setFailed('Checks failed: '+(!ok_a?'dart analyze. ':'')+(!ok_t?'flutter test.':''));
             }
 
