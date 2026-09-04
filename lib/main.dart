@@ -11,13 +11,13 @@ import 'database.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Connect to MongoDB and synchronize database
-  MongoDatabase.connect().then((connected) {
+  // Connect to MySQL and synchronize database
+  MySqlDatabase.connect().then((connected) {
     if (connected) {
       AppService.instance.syncWithDatabase();
     }
   }).catchError((e) {
-    debugPrint("MongoDB initialization note: $e");
+    debugPrint("MySQL initialization note: $e");
   });
 
   runApp(
